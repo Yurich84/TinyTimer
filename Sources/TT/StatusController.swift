@@ -11,7 +11,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
     /// Activity rows of the open menu, refreshed every tick so their totals stay live.
-    private var activityItems: [Activity: NSMenuItem] = [:]
+    private var activityRows: [Activity: ActivityRowView] = [:]
 
     var onOpenWindow: () -> Void = {}
     var onExport: () -> Void = {}
@@ -26,7 +26,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         tracker.$now.combineLatest(tracker.$current)
             .sink { [weak self] now, current in
                 self?.updateTitle(now: now, current: current)
-                self?.updateActivityItems()
+                self?.updateActivityRows()
             }
             .store(in: &cancellables)
     }
@@ -55,19 +55,23 @@ final class StatusController: NSObject, NSMenuDelegate {
 
         let summary = NSHostingView(rootView: MenuSummaryView(tracker: tracker))
         summary.frame.size = summary.fittingSize
+        // Stretch to the menu's width so the total sits at the right edge with the shortcuts.
+        summary.autoresizingMask = [.width]
         let summaryItem = NSMenuItem()
         summaryItem.view = summary
         menu.addItem(summaryItem)
 
-        activityItems = [:]
+        activityRows = [:]
         for activity in Activity.allCases {
             let mi = NSMenuItem(title: activity.title, action: #selector(startActivity(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = activity.rawValue
+            let row = ActivityRowView(title: activity.title)
+            mi.view = row
             menu.addItem(mi)
-            activityItems[activity] = mi
+            activityRows[activity] = row
         }
-        updateActivityItems()
+        updateActivityRows()
         if tracker.current != nil {
             let stopItem = action("Stop", #selector(stop))
             stopItem.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: nil)?
@@ -83,34 +87,17 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.addItem(action("Quit TT", #selector(quit), key: "q"))
     }
 
-    /// "● Development      1h 05m": state dot, name and today's total right-aligned under the header's total.
-    private func updateActivityItems() {
-        guard !activityItems.isEmpty else { return }
+    private func updateActivityRows() {
+        guard !activityRows.isEmpty else { return }
         let totals = tracker.totals(on: tracker.now)
-        let font = NSFont.menuFont(ofSize: 0)
-        let digits = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular)
-        let style = NSMutableParagraphStyle()
-        style.tabStops = [NSTextTab(textAlignment: .right, location: Self.totalColumn)]
-        for (activity, mi) in activityItems {
-            let running = tracker.current?.activity == activity
-            let title = NSMutableAttributedString(string: activity.title + "\t", attributes: [.font: font, .paragraphStyle: style])
-            title.append(NSAttributedString(string: Format.short(totals[activity] ?? 0), attributes: [
-                .font: digits, .paragraphStyle: style, .foregroundColor: NSColor.secondaryLabelColor,
-            ]))
-            mi.attributedTitle = title
-            mi.image = Self.dot(running: running)
+        for (activity, row) in activityRows {
+            row.total = Format.short(totals[activity] ?? 0)
+            row.running = tracker.current?.activity == activity
         }
     }
 
-    /// Right edge of the totals, measured from the start of an item's title.
-    private static let totalColumn: CGFloat = 192
-
-    private static func dot(running: Bool) -> NSImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
-            .applying(.init(paletteColors: [running ? .systemGreen : .secondaryLabelColor]))
-        return NSImage(systemSymbolName: running ? "circle.fill" : "circle", accessibilityDescription: running ? "Running" : nil)?
-            .withSymbolConfiguration(config)
-    }
+    /// Gap between the right edge of the shortcuts (⌘ Q) and the menu's right edge; totals end there too.
+    static let trailingInset: CGFloat = 16
 
     private func action(_ title: String, _ selector: Selector, key: String = "") -> NSMenuItem {
         let mi = NSMenuItem(title: title, action: selector, keyEquivalent: key)
@@ -143,9 +130,70 @@ struct MenuSummaryView: View {
         }
         .fontWeight(.semibold)
         .monospacedDigit()
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
+        .padding(.trailing, StatusController.trailingInset)
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .frame(width: 250)
+        .frame(minWidth: ActivityRowView.minWidth)
+    }
+}
+
+/// "● Development      1h 05m" menu row. A custom view because a native item can't put text at the
+/// menu's right edge: its tab stops are relative to the title and the item reserves a shortcut column.
+/// Clicking it fires the enclosing item's action.
+final class ActivityRowView: NSView {
+    static let minWidth: CGFloat = 200
+
+    private let title: String
+    var total = "" { didSet { if total != oldValue { needsDisplay = true } } }
+    var running = false { didSet { if running != oldValue { needsDisplay = true } } }
+
+    init(title: String) {
+        self.title = title
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.minWidth, height: 24))
+        // Stretches to the menu's width, so the total lines up with the shortcuts.
+        autoresizingMask = [.width]
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let highlighted = enclosingMenuItem?.isHighlighted ?? false
+        if highlighted {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 5, yRadius: 5).fill()
+        }
+        let text: NSColor = highlighted ? .selectedMenuItemTextColor : .labelColor
+        let secondary: NSColor = highlighted ? .selectedMenuItemTextColor : .secondaryLabelColor
+        let font = NSFont.menuFont(ofSize: 0)
+
+        let dotSize: CGFloat = 10
+        let dotRect = NSRect(x: 11, y: (bounds.height - dotSize) / 2, width: dotSize, height: dotSize)
+        if running {
+            NSColor.systemGreen.setFill()
+            NSBezierPath(ovalIn: dotRect).fill()
+        } else {
+            secondary.setStroke()
+            let ring = NSBezierPath(ovalIn: dotRect.insetBy(dx: 0.75, dy: 0.75))
+            ring.lineWidth = 1.5
+            ring.stroke()
+        }
+
+        let name = NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: text])
+        name.draw(at: NSPoint(x: 34, y: (bounds.height - name.size().height) / 2))
+
+        let value = NSAttributedString(string: total, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular),
+            .foregroundColor: secondary,
+        ])
+        let size = value.size()
+        value.draw(at: NSPoint(x: bounds.maxX - StatusController.trailingInset - size.width, y: (bounds.height - size.height) / 2))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let item = enclosingMenuItem, let menu = item.menu else { return }
+        menu.cancelTracking()
+        if let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
     }
 }
