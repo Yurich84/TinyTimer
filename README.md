@@ -1,6 +1,6 @@
 # TT — menu bar time tracker
 
-`⌚ 01:42:17  Development ▾` in the macOS status bar. Activities: Development, Investigation, Meeting.
+Hourglass icon + `D 01:42:17` (initial of the current activity) in the macOS status bar. Activities: Development, Investigation, Meeting.
 Starting an activity stops the previous one. Every interval is a row in SQLite
 (`~/Library/Application Support/TT/tt.sqlite`, table `entries(id, activity, start, end)`).
 

@@ -3,13 +3,15 @@ import Combine
 import SwiftUI
 import TTCore
 
-/// Menu bar item: "⌚ 01:42:17  Development ▾" plus the dropdown menu.
+/// Menu bar item: hourglass icon + "D 01:42:17" while running, plus the dropdown menu.
 @MainActor
 final class StatusController: NSObject, NSMenuDelegate {
     private let tracker: Tracker
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
+    /// Activity rows of the open menu, refreshed every tick so their totals stay live.
+    private var activityItems: [Activity: NSMenuItem] = [:]
 
     var onOpenWindow: () -> Void = {}
     var onExport: () -> Void = {}
@@ -22,20 +24,28 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         item.menu = menu
         tracker.$now.combineLatest(tracker.$current)
-            .sink { [weak self] now, current in self?.updateTitle(now: now, current: current) }
+            .sink { [weak self] now, current in
+                self?.updateTitle(now: now, current: current)
+                self?.updateActivityItems()
+            }
             .store(in: &cancellables)
     }
 
     private func updateTitle(now: Date, current: Entry?) {
-        let text: String
-        if let current {
-            text = "⌚ \(Format.hms(now.timeIntervalSince(current.start)))  \(current.activity.title) ▾"
-        } else {
-            text = "⌚ Idle ▾"
+        guard let button = item.button else { return }
+        if button.image == nil {
+            // Template image follows the menu bar's light/dark appearance.
+            let image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "TT")?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            image?.isTemplate = true
+            button.image = image
+            button.imagePosition = .imageLeading
+            // Monospaced digits stop the width from jittering every second.
+            button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
-        // Plain title keeps the menu bar's adaptive color; monospaced digits stop jitter.
-        item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        item.button?.title = text
+        // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 01:42:17").
+        button.title = current.map { " \($0.activity.title.prefix(1)) " + Format.hms(now.timeIntervalSince($0.start)) } ?? ""
+        button.toolTip = current.map { "TT — \($0.activity.title)" } ?? "TT — Idle"
     }
 
     // MARK: - NSMenuDelegate
@@ -48,17 +58,21 @@ final class StatusController: NSObject, NSMenuDelegate {
         let summaryItem = NSMenuItem()
         summaryItem.view = summary
         menu.addItem(summaryItem)
-        menu.addItem(.separator())
 
+        activityItems = [:]
         for activity in Activity.allCases {
-            let mi = NSMenuItem(title: "▶ \(activity.title)", action: #selector(startActivity(_:)), keyEquivalent: "")
+            let mi = NSMenuItem(title: activity.title, action: #selector(startActivity(_:)), keyEquivalent: "")
             mi.target = self
             mi.representedObject = activity.rawValue
-            mi.state = tracker.current?.activity == activity ? .on : .off
             menu.addItem(mi)
+            activityItems[activity] = mi
         }
+        updateActivityItems()
         if tracker.current != nil {
-            menu.addItem(action("■ Stop", #selector(stop)))
+            let stopItem = action("Stop", #selector(stop))
+            stopItem.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
+            menu.addItem(stopItem)
         }
         menu.addItem(.separator())
 
@@ -67,6 +81,35 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.addItem(action("Settings…", #selector(settings), key: ","))
         menu.addItem(.separator())
         menu.addItem(action("Quit TT", #selector(quit), key: "q"))
+    }
+
+    /// "● Development      1h 05m": state dot, name and today's total right-aligned under the header's total.
+    private func updateActivityItems() {
+        guard !activityItems.isEmpty else { return }
+        let totals = tracker.totals(on: tracker.now)
+        let font = NSFont.menuFont(ofSize: 0)
+        let digits = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize, weight: .regular)
+        let style = NSMutableParagraphStyle()
+        style.tabStops = [NSTextTab(textAlignment: .right, location: Self.totalColumn)]
+        for (activity, mi) in activityItems {
+            let running = tracker.current?.activity == activity
+            let title = NSMutableAttributedString(string: activity.title + "\t", attributes: [.font: font, .paragraphStyle: style])
+            title.append(NSAttributedString(string: Format.short(totals[activity] ?? 0), attributes: [
+                .font: digits, .paragraphStyle: style, .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+            mi.attributedTitle = title
+            mi.image = Self.dot(running: running)
+        }
+    }
+
+    /// Right edge of the totals, measured from the start of an item's title.
+    private static let totalColumn: CGFloat = 192
+
+    private static func dot(running: Bool) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            .applying(.init(paletteColors: [running ? .systemGreen : .secondaryLabelColor]))
+        return NSImage(systemSymbolName: running ? "circle.fill" : "circle", accessibilityDescription: running ? "Running" : nil)?
+            .withSymbolConfiguration(config)
     }
 
     private func action(_ title: String, _ selector: Selector, key: String = "") -> NSMenuItem {
@@ -87,32 +130,22 @@ final class StatusController: NSObject, NSMenuDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
-/// Non-interactive header of the menu: today's total and per-activity totals.
+/// Non-interactive header of the menu: today's total. Per-activity totals live in the activity items below.
 struct MenuSummaryView: View {
     @ObservedObject var tracker: Tracker
 
     var body: some View {
         let totals = tracker.totals(on: tracker.now)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Today").fontWeight(.semibold)
-                Spacer()
-                Text(Format.short(totals.values.reduce(0, +))).fontWeight(.semibold)
-            }
-            .padding(.bottom, 4)
-            ForEach(Activity.allCases) { activity in
-                HStack {
-                    Text(tracker.current?.activity == activity ? "●" : "○")
-                        .foregroundStyle(tracker.current?.activity == activity ? Color.green : Color.secondary)
-                    Text(activity.title)
-                    Spacer()
-                    Text(Format.short(totals[activity] ?? 0)).foregroundStyle(.secondary)
-                }
-            }
+        HStack {
+            Text("Today")
+            Spacer()
+            Text(Format.short(totals.values.reduce(0, +)))
         }
+        .fontWeight(.semibold)
         .monospacedDigit()
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
         .frame(width: 250)
     }
 }
