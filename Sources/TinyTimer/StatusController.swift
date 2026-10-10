@@ -3,9 +3,9 @@ import Combine
 import SwiftUI
 import TinyTimerCore
 
-/// Menu bar item: hourglass icon + "D 42:17" / "D 1:42:17" while running, today's total ("00:00" when empty)
-/// while idle. Left click stops the running activity or
-/// starts the default one; right click (or ⌃-click) opens the dropdown menu.
+/// Menu bar item: the activity's initial in a circle + "42:17" / "1:42:17". After a stop the item keeps
+/// the stopped activity and its time. Left click stops the running activity or
+/// starts the idle one (see `idleActivity`); right click (or ⌃-click) opens the dropdown menu.
 @MainActor
 final class StatusController: NSObject, NSMenuDelegate {
     private let tracker: Tracker
@@ -30,7 +30,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         item.button?.target = self
         item.button?.action = #selector(buttonClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        // Activity list changes also bump `now` (Tracker.touch), so the tooltip's default activity follows them.
+        // Activity list changes also bump `now` (Tracker.touch), so the idle activity follows them.
         tracker.$now.combineLatest(tracker.$current, preferences.$defaultActivityName, preferences.$timerMode)
             .sink { [weak self] now, current, _, timerMode in
                 self?.updateTitle(now: now, current: current, timerMode: timerMode)
@@ -45,7 +45,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             showMenu()
         } else if tracker.current != nil {
             tracker.stop()
-        } else if let activity = preferences.defaultActivity(in: tracker.activities) {
+        } else if let activity = idleActivity {
             tracker.start(activity)
         }
     }
@@ -58,42 +58,97 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     private func updateTitle(now: Date, current: Entry?, timerMode: TimerMode) {
         guard let button = item.button else { return }
-        if button.image == nil {
-            // Template image follows the menu bar's light/dark appearance.
-            let image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "TinyTimer")?
-                .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            image?.isTemplate = true
-            button.image = image
+        if button.font != Self.titleFont {
             button.imagePosition = .imageLeading
             // Monospaced digits stop the width from jittering every second.
-            button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            button.font = Self.titleFont
         }
-        // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 42:17").
+        // The circle shows the running activity, or while idle the one a click starts.
+        let activity = current?.activity ?? idleActivity
+        let badge = Badge(initial: String(activity?.title.prefix(1) ?? ""), running: current != nil)
+        if badge != shownBadge {
+            shownBadge = badge
+            button.image = badge.image()
+        }
+        // One SQLite query per tick; re-runs on every tick, so the totals reset at midnight and follow History edits.
+        let entries = tracker.entries(on: now)
+        let totals = Report.totals(entries, in: Report.day(containing: now), listed: tracker.activities, now: now)
+        let dayTotal = totals.values.reduce(0, +)
+        let shown: TimeInterval
         if let current {
-            button.title = Self.runningTitle(initial: current.activity.title.prefix(1), elapsed: elapsed(of: current, now: now, mode: timerMode))
+            shown = elapsed(of: current, now: now, mode: timerMode, totals: totals)
+        } else if let activity {
+            // A stopped timer stays where it stopped: the last session or the day total of that activity.
+            switch timerMode {
+            case .session: shown = entries.last { $0.activity == activity }.map { ($0.end ?? now).timeIntervalSince($0.start) } ?? 0
+            case .dayTotal: shown = totals[activity] ?? 0
+            }
         } else {
-            // One SQLite query per tick; re-runs on every tick, so the total resets at midnight and follows History edits.
-            button.title = Self.idleTitle(dayTotal: tracker.totals(on: now, now: now).values.reduce(0, +))
+            shown = 0
         }
+        button.title = Self.title(shown, dayTotal: dayTotal)
         button.toolTip = current.map { "TinyTimer — \($0.activity.title) · click: stop, right-click: menu" }
-            ?? "TinyTimer — Idle · click: start \(preferences.defaultActivity(in: tracker.activities)?.title ?? "—"), right-click: menu"
+            ?? "TinyTimer — Idle · click: start \(activity?.title ?? "—"), right-click: menu"
     }
 
-    /// " D 42:17": initial of the running activity + its timer.
-    nonisolated static func runningTitle(initial: Substring, elapsed: TimeInterval) -> String {
-        " \(initial) " + Format.timer(elapsed)
+    /// While idle: the activity that ran last if it is still listed, otherwise the default one.
+    private var idleActivity: Activity? {
+        tracker.last.flatMap { tracker.activities.contains($0) ? $0 : nil }
+            ?? preferences.defaultActivity(in: tracker.activities)
     }
 
-    /// " 1:42:17": today's total across all activities, " 00:00" when nothing was tracked.
-    nonisolated static func idleTitle(dayTotal: TimeInterval) -> String {
-        " " + Format.timer(dayTotal)
+    private static let titleFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    private var shownBadge: Badge?
+
+    /// " 42:17" with as many hour digits as today's total. The running timer never exceeds today's total,
+    /// so the item keeps one width when the timer starts or stops: " 0:05:00" next to a total of " 1:42:17".
+    nonisolated static func title(_ seconds: TimeInterval, dayTotal: TimeInterval) -> String {
+        let hourDigits = String(Int(dayTotal.rounded(.down)) / 3600).count
+        let s = Int(seconds.rounded(.down))
+        guard dayTotal >= 3600 else { return " " + Format.timer(seconds) }
+        return " " + String(format: "%0\(hourDigits)d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60)
     }
 
-    private func elapsed(of entry: Entry, now: Date, mode: TimerMode) -> TimeInterval {
+    /// Menu bar icon: the activity's initial in a circle, filled while running, outlined while idle.
+    private struct Badge: Equatable {
+        let initial: String
+        let running: Bool
+
+        func image() -> NSImage {
+            let size: CGFloat = 16
+            let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+                let circle = rect.insetBy(dx: 0.75, dy: 0.75)
+                NSColor.black.set()
+                if running {
+                    NSBezierPath(ovalIn: circle).fill()
+                } else {
+                    let ring = NSBezierPath(ovalIn: circle)
+                    ring.lineWidth = 1.5
+                    ring.stroke()
+                }
+                let letter = NSAttributedString(string: initial.uppercased(), attributes: [
+                    .font: NSFont.systemFont(ofSize: 9.5, weight: .bold),
+                    .foregroundColor: NSColor.black,
+                ])
+                let letterSize = letter.size()
+                let origin = NSPoint(x: rect.midX - letterSize.width / 2, y: rect.midY - letterSize.height / 2)
+                // While running the letter is cut out of the filled circle.
+                NSGraphicsContext.current?.compositingOperation = running ? .destinationOut : .sourceOver
+                letter.draw(at: origin)
+                return true
+            }
+            // Template image follows the menu bar's light/dark appearance.
+            image.isTemplate = true
+            image.accessibilityDescription = "TinyTimer"
+            return image
+        }
+    }
+
+    private func elapsed(of entry: Entry, now: Date, mode: TimerMode, totals: [Activity: TimeInterval]) -> TimeInterval {
         switch mode {
         case .session: now.timeIntervalSince(entry.start)
-        // One SQLite query per tick; the store already includes the running entry.
-        case .dayTotal: tracker.totals(on: now, now: now)[entry.activity] ?? 0
+        // The store already includes the running entry.
+        case .dayTotal: totals[entry.activity] ?? 0
         }
     }
 

@@ -9,6 +9,8 @@ final class Tracker: ObservableObject {
     let dataURL: URL
 
     @Published private(set) var current: Entry?
+    /// The activity that ran last, so the status bar keeps it after a stop. Set before `current` changes.
+    @Published private(set) var last: Activity?
     /// The user's activity list, in display order. Never empty.
     @Published private(set) var activities: [Activity]
     @Published private(set) var now = Date()
@@ -23,6 +25,7 @@ final class Tracker: ObservableObject {
         activities = Self.load(store)
         // An entry left open by a crash keeps running.
         current = try? store.openEntry()
+        last = current?.activity ?? (try? store.entries(overlapping: Report.day(containing: Date())))?.last?.activity
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.now = Date() }
         }
@@ -34,7 +37,9 @@ final class Tracker: ObservableObject {
     func start(_ activity: Activity) {
         guard current?.activity != activity else { return }
         do {
-            current = try store.start(activity)
+            let entry = try store.start(activity)
+            last = activity
+            current = entry
             touch()
         } catch {
             report(error)

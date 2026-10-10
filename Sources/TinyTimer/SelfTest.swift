@@ -104,10 +104,11 @@ enum SelfTest {
             check(Format.timer(42 * 60 + 17) == "42:17", "timer no hours")
             check(Format.timer(3723) == "1:02:03", "timer hours without leading zero")
             check(Format.timer(10 * 3600) == "10:00:00", "timer two-digit hours")
-            check(StatusController.idleTitle(dayTotal: 0) == " 00:00", "idle title zero")
-            check(StatusController.idleTitle(dayTotal: 42 * 60 + 17) == " 42:17", "idle title no hours")
-            check(StatusController.idleTitle(dayTotal: 6137) == " 1:42:17", "idle title hours")
-            check(StatusController.runningTitle(initial: "D", elapsed: 6137) == " D 1:42:17", "running title")
+            check(StatusController.title(0, dayTotal: 0) == " 00:00", "title zero")
+            check(StatusController.title(42 * 60 + 17, dayTotal: 42 * 60 + 17) == " 42:17", "title no hours")
+            check(StatusController.title(6137, dayTotal: 6137) == " 1:42:17", "title hours")
+            check(StatusController.title(300, dayTotal: 6137) == " 0:05:00", "title keeps the total's hour digits")
+            check(StatusController.title(300, dayTotal: 10 * 3600) == " 00:05:00", "title keeps two hour digits")
 
             // Preferences: default value, persistence, fallback for an unknown stored value.
             let suite = "tinytimer-selftest-\(UUID())"

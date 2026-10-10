@@ -2,7 +2,7 @@
 
 [![Release](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml/badge.svg)](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml)
 
-Hourglass icon + `D 42:17` / `D 1:42:17` (initial of the current activity; hours hidden while 0) in the macOS status bar. When idle, the status bar shows today's total for all activities (`00:00` if nothing is tracked).
+The initial of the activity in a circle + `42:17` / `1:42:17` in the macOS status bar. While running, the circle is filled and shows the current activity. After a stop, the circle is outlined and the item keeps the stopped activity and its time; a click starts that activity again. With nothing tracked today, it shows the default activity and `00:00`. The timer keeps the hour digits of today's total, so the item does not change width when you start or stop.
 Activities are configurable in Settings; the defaults are Development, Investigation, Meeting.
 Starting an activity stops the previous one. Every interval is a row in SQLite
 (`~/Library/Application Support/TinyTimer/tinytimer.sqlite`, table `entries(id, activity, start, end)`;
