@@ -1,5 +1,7 @@
 # TinyTimer — menu bar time tracker
 
+[![Release](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml/badge.svg)](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml)
+
 Hourglass icon + `D 42:17` / `D 1:42:17` (initial of the current activity; hours hidden while 0) in the macOS status bar. Activities: Development, Investigation, Meeting.
 Starting an activity stops the previous one. Every interval is a row in SQLite
 (`~/Library/Application Support/TinyTimer/tinytimer.sqlite`, table `entries(id, activity, start, end)`).
@@ -14,6 +16,19 @@ Starting an activity stops the previous one. Every interval is a row in SQLite
   or one row per entry (`date,activity,start,end,duration`)
 - **Settings → Timer shows** — time since the last switch, or today's total for the current activity
 - Sleep stops the running entry; it resumes on wake if the sleep was shorter than 15 min.
+
+## Download
+
+**[Download the latest TinyTimer.zip](https://github.com/Yurich84/TinyTimer/releases/latest/download/TinyTimer.zip)**
+· [all releases](https://github.com/Yurich84/TinyTimer/releases)
+
+Requires Apple Silicon (arm64) and macOS 14 or later. Every push to `main` builds a new release.
+
+Unzip and move `TinyTimer.app` to `/Applications`. The app is ad-hoc signed and not notarized,
+so Gatekeeper blocks the first launch. To allow it, do one of these:
+
+- Run `xattr -dr com.apple.quarantine /Applications/TinyTimer.app`
+- Open the app once, then go to System Settings → Privacy & Security and click **Open Anyway**
 
 ## Build
 
