@@ -36,7 +36,8 @@ enum SelfTest {
             check(try store.activities() == Activity.defaults, "new store is seeded with the defaults")
             let listed = Activity.defaults
             let totals = Report.totals(try store.entries(overlapping: day5), in: day5, listed: listed, now: at(5, 20))
-            check(totals[.development] == 2 * 3600 + 17 * 60 + 57 * 60, "development total")
+            let developmentTotal: TimeInterval = 2 * 3600 + 17 * 60 + 57 * 60
+            check(totals[.development] == developmentTotal, "development total")
             check(totals[.meeting] == 46 * 60, "meeting total")
             check(totals[.investigation] == 0, "investigation zero")
 
