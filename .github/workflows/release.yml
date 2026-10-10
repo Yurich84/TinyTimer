@@ -26,12 +26,23 @@ jobs:
           xcodebuild -version
           ls -d /Applications/Xcode*
           swift --version
+          echo "::notice::$(swift --version 2>&1 | head -1) | $(ls -d /Applications/Xcode* | tr '\n' ' ')"
 
       - name: Build
-        run: swift build --build-system native
+        run: |
+          set -o pipefail
+          if ! swift build --build-system native 2>&1 | tee build.log; then
+            grep -E "error:" build.log | sort -u | head -30 | while read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
 
       - name: Self-test
-        run: swift run --build-system native --skip-build TinyTimer --selftest
+        run: |
+          set -o pipefail
+          if ! swift run --build-system native --skip-build TinyTimer --selftest 2>&1 | tee selftest.log; then
+            grep -iE "error|fail" selftest.log | head -30 | while read -r l; do echo "::error::$l"; done
+            exit 1
+          fi
 
       - name: Build app bundle
         run: ./bundle.sh
