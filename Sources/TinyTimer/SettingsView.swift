@@ -1,6 +1,7 @@
 import AppKit
 import ServiceManagement
 import SwiftUI
+import TinyTimerCore
 
 final class SettingsModel: ObservableObject {
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -10,9 +11,16 @@ final class SettingsModel: ObservableObject {
 struct SettingsView: View {
     let dataURL: URL
     @ObservedObject var model: SettingsModel
+    @ObservedObject var preferences: Preferences
 
     var body: some View {
         Form {
+            Picker("Default activity", selection: $preferences.defaultActivity) {
+                ForEach(Activity.allCases) { Text($0.title).tag($0) }
+            }
+            Picker("Timer shows", selection: $preferences.timerMode) {
+                ForEach(TimerMode.allCases) { Text($0.title).tag($0) }
+            }
             Toggle("Launch at login", isOn: Binding(
                 get: { model.launchAtLogin },
                 set: { setLaunchAtLogin($0) }

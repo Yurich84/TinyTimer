@@ -1,10 +1,13 @@
 import SwiftUI
 import TinyTimerCore
 
-/// Selected day of the window. (A model rather than @State: SwiftUI's @State macro
-/// plugin isn't shipped with Command Line Tools.)
+/// Selected day of the window, plus the History tab's selection, editor sheet and pending delete.
+/// (A model rather than @State: SwiftUI's @State macro plugin isn't shipped with Command Line Tools.)
 final class DaySelection: ObservableObject {
     @Published var day = Date()
+    @Published var selectedEntry: Int64?
+    @Published var editor: EntryEditor?
+    @Published var pendingDelete: Entry?
 }
 
 /// "Today" window: History and Statistics tabs for a chosen day.
@@ -19,7 +22,7 @@ struct MainView: View {
             DayPicker(day: $selection.day)
                 .padding(.vertical, 10)
             TabView {
-                HistoryView(tracker: tracker, day: day)
+                HistoryView(tracker: tracker, selection: selection)
                     .tabItem { Text("History") }
                 StatisticsView(tracker: tracker, day: day)
                     .tabItem { Text("Statistics") }
@@ -61,16 +64,17 @@ private struct DayPicker: View {
 
 private struct HistoryView: View {
     @ObservedObject var tracker: Tracker
-    let day: Date
+    @ObservedObject var selection: DaySelection
 
     var body: some View {
+        let day = selection.day
         let interval = Report.day(containing: day)
         let entries = tracker.entries(on: day)
-        Group {
+        VStack(spacing: 8) {
             if entries.isEmpty {
                 Text("No entries").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(entries) { entry in
+                List(entries, selection: $selection.selectedEntry) { entry in
                     HStack {
                         Text("\(Format.clock(entry.start)) — \(entry.end.map(Format.clock) ?? "now")")
                             .frame(width: 120, alignment: .leading)
@@ -81,7 +85,148 @@ private struct HistoryView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // Double-click is the primary action.
+                .contextMenu(forSelectionType: Int64.self) { ids in
+                    if let entry = entries.first(where: { ids.contains($0.id) }) {
+                        Button("Edit…") { selection.editor = EntryEditor(entry: entry) }
+                        Button("Delete…") { selection.pendingDelete = entry }
+                    }
+                } primaryAction: { ids in
+                    if let entry = entries.first(where: { ids.contains($0.id) }) {
+                        selection.editor = EntryEditor(entry: entry)
+                    }
+                }
             }
+            HStack {
+                Spacer()
+                Button("Add…") { selection.editor = EntryEditor(newOn: day, before: entries.first) }
+            }
+            .padding([.horizontal, .bottom], 8)
+        }
+        .sheet(item: $selection.editor) { editor in
+            EntryEditorView(model: editor, tracker: tracker)
+        }
+        .confirmationDialog("Delete this entry?", isPresented: Binding(
+            get: { selection.pendingDelete != nil },
+            set: { if !$0 { selection.pendingDelete = nil } }
+        ), presenting: selection.pendingDelete) { entry in
+            Button("Delete", role: .destructive) { tracker.delete(entry) }
+        } message: { entry in
+            Text("\(entry.activity.title), \(Format.clock(entry.start)) — \(entry.end.map(Format.clock) ?? "now")")
+        }
+    }
+}
+
+/// Draft for the editor sheet: an existing entry (`entry != nil`) or a new one.
+final class EntryEditor: ObservableObject, Identifiable {
+    let entry: Entry?
+    @Published var activity: Activity
+    @Published var start: Date
+    /// nil only while editing the running entry.
+    @Published var end: Date?
+    @Published var error: String?
+    /// Exact time of "Stop now"; kept to the second like an untouched field.
+    private var stoppedAt: Date?
+
+    init(entry: Entry) {
+        self.entry = entry
+        activity = entry.activity
+        start = entry.start
+        end = entry.end
+    }
+
+    /// A new 30-minute entry on `day`, ending where the day's first entry (`next`) starts,
+    /// e.g. for a morning before the timer was started. Without room for it: 09:00–09:30.
+    init(newOn day: Date, before next: Entry?, calendar: Calendar = .current) {
+        entry = nil
+        activity = next?.activity ?? .development
+        let length: TimeInterval = 30 * 60
+        let dayStart = calendar.startOfDay(for: day)
+        var end = calendar.date(byAdding: .minute, value: 9 * 60 + 30, to: dayStart)!
+        if let next, next.start >= dayStart.addingTimeInterval(length) {
+            end = Self.minute(next.start)
+        }
+        self.end = end
+        start = end.addingTimeInterval(-length)
+    }
+
+    /// Values to store. The pickers show minutes, so a field the user changed is cut to the minute;
+    /// an untouched field keeps its exact seconds and can't start overlapping its neighbour.
+    var values: (start: Date, end: Date?) {
+        func pick(_ value: Date, _ original: Date?) -> Date { value == original ? value : Self.minute(value) }
+        return (pick(start, entry?.start), end.map { pick($0, entry?.end ?? stoppedAt) })
+    }
+
+    func stopNow() {
+        stoppedAt = Date()
+        end = stoppedAt
+    }
+
+    static func minute(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded(.down) * 60)
+    }
+}
+
+struct EntryEditorView: View {
+    @ObservedObject var model: EntryEditor
+    @ObservedObject var tracker: Tracker
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Picker("Activity", selection: $model.activity) {
+                    ForEach(Activity.allCases) { Text($0.title).tag($0) }
+                }
+                DatePicker("Start", selection: $model.start, displayedComponents: [.date, .hourAndMinute])
+                if let end = model.end {
+                    DatePicker("End", selection: Binding(get: { end }, set: { model.end = $0 }),
+                               displayedComponents: [.date, .hourAndMinute])
+                } else {
+                    LabeledContent("End") {
+                        HStack {
+                            Text("Running").foregroundStyle(.secondary)
+                            Button("Stop now") { model.stopNow() }
+                        }
+                    }
+                }
+                LabeledContent("Duration") {
+                    Text(Format.short((model.end ?? tracker.now).timeIntervalSince(model.start)))
+                }
+                if let error = model.error {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(model.entry == nil ? "Add" : "Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding([.horizontal, .bottom], 20)
+        }
+        .frame(width: 380)
+        .fixedSize()
+        .monospacedDigit()
+    }
+
+    private func save() {
+        let (start, end) = model.values
+        do {
+            // The store has no clock; future times would make the status-bar timer run negative.
+            if start > Date() || (end ?? .distantPast) > Date() {
+                throw StoreError.invalid("Times must not be in the future.")
+            }
+            if let entry = model.entry {
+                try tracker.update(entry.id, activity: model.activity, start: start, end: end)
+            } else {
+                try tracker.insert(activity: model.activity, start: start, end: end)
+            }
+            dismiss()
+        } catch {
+            model.error = error.localizedDescription
         }
     }
 }

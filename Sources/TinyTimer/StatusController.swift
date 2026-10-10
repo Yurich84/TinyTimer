@@ -3,10 +3,12 @@ import Combine
 import SwiftUI
 import TinyTimerCore
 
-/// Menu bar item: hourglass icon + "D 01:42:17" while running, plus the dropdown menu.
+/// Menu bar item: hourglass icon + "D 42:17" / "D 1:42:17" while running. Left click stops the running activity or
+/// starts the default one; right click (or ⌃-click) opens the dropdown menu.
 @MainActor
 final class StatusController: NSObject, NSMenuDelegate {
     private let tracker: Tracker
+    private let preferences: Preferences
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private var cancellables: Set<AnyCancellable> = []
@@ -17,21 +19,42 @@ final class StatusController: NSObject, NSMenuDelegate {
     var onExport: () -> Void = {}
     var onSettings: () -> Void = {}
 
-    init(tracker: Tracker) {
+    init(tracker: Tracker, preferences: Preferences) {
         self.tracker = tracker
+        self.preferences = preferences
         super.init()
         menu.delegate = self
         menu.autoenablesItems = false
-        item.menu = menu
-        tracker.$now.combineLatest(tracker.$current)
-            .sink { [weak self] now, current in
-                self?.updateTitle(now: now, current: current)
+        // No permanent item.menu: it would open on every click. The menu is attached only for a right click.
+        item.button?.target = self
+        item.button?.action = #selector(buttonClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        tracker.$now.combineLatest(tracker.$current, preferences.$defaultActivity, preferences.$timerMode)
+            .sink { [weak self] now, current, defaultActivity, timerMode in
+                self?.updateTitle(now: now, current: current, defaultActivity: defaultActivity, timerMode: timerMode)
                 self?.updateActivityRows()
             }
             .store(in: &cancellables)
     }
 
-    private func updateTitle(now: Date, current: Entry?) {
+    @objc private func buttonClicked() {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+            showMenu()
+        } else if tracker.current != nil {
+            tracker.stop()
+        } else {
+            tracker.start(preferences.defaultActivity)
+        }
+    }
+
+    /// Attaches the menu only for this click, so menuNeedsUpdate still builds it; menuDidClose detaches it.
+    private func showMenu() {
+        item.menu = menu
+        item.button?.performClick(nil)
+    }
+
+    private func updateTitle(now: Date, current: Entry?, defaultActivity: Activity, timerMode: TimerMode) {
         guard let button = item.button else { return }
         if button.image == nil {
             // Template image follows the menu bar's light/dark appearance.
@@ -43,12 +66,25 @@ final class StatusController: NSObject, NSMenuDelegate {
             // Monospaced digits stop the width from jittering every second.
             button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
-        // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 01:42:17").
-        button.title = current.map { " \($0.activity.title.prefix(1)) " + Format.hms(now.timeIntervalSince($0.start)) } ?? ""
-        button.toolTip = current.map { "TinyTimer — \($0.activity.title)" } ?? "TinyTimer — Idle"
+        // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 42:17").
+        button.title = current.map { " \($0.activity.title.prefix(1)) " + Format.timer(elapsed(of: $0, now: now, mode: timerMode)) } ?? ""
+        button.toolTip = current.map { "TinyTimer — \($0.activity.title) · click: stop, right-click: menu" }
+            ?? "TinyTimer — Idle · click: start \(defaultActivity.title), right-click: menu"
+    }
+
+    private func elapsed(of entry: Entry, now: Date, mode: TimerMode) -> TimeInterval {
+        switch mode {
+        case .session: now.timeIntervalSince(entry.start)
+        // One SQLite query per tick; the store already includes the running entry.
+        case .dayTotal: tracker.totals(on: now, now: now)[entry.activity] ?? 0
+        }
     }
 
     // MARK: - NSMenuDelegate
+
+    func menuDidClose(_ menu: NSMenu) {
+        item.menu = nil
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()

@@ -49,12 +49,41 @@ final class Tracker: ObservableObject {
         }
     }
 
+    // MARK: - Manual edits
+    // Insert and update throw so the editor sheet can show the error inline.
+
+    func insert(activity: Activity, start: Date, end: Date?) throws {
+        try store.insert(activity: activity, start: start, end: end)
+        reload()
+    }
+
+    func update(_ id: Int64, activity: Activity, start: Date, end: Date?) throws {
+        try store.update(id: id, activity: activity, start: start, end: end)
+        reload()
+    }
+
+    func delete(_ entry: Entry) {
+        do {
+            try store.delete(id: entry.id)
+            reload()
+        } catch {
+            report(error)
+        }
+    }
+
+    /// An edit may have changed, closed or removed the running entry.
+    private func reload() {
+        current = try? store.openEntry()
+        touch()
+    }
+
     func entries(on day: Date) -> [Entry] {
         (try? store.entries(overlapping: Report.day(containing: day))) ?? []
     }
 
-    func totals(on day: Date) -> [Activity: TimeInterval] {
-        Report.totals(entries(on: day), in: Report.day(containing: day), now: now)
+    /// `now` overrides the clock: @Published sinks run before `self.now` takes the new value.
+    func totals(on day: Date, now: Date? = nil) -> [Activity: TimeInterval] {
+        Report.totals(entries(on: day), in: Report.day(containing: day), now: now ?? self.now)
     }
 
     var elapsed: TimeInterval {

@@ -3,11 +3,17 @@ import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-public enum StoreError: Error, CustomStringConvertible {
+public enum StoreError: Error, CustomStringConvertible, LocalizedError {
     case sqlite(String)
+    /// A rejected edit; the message is shown to the user as is.
+    case invalid(String)
     public var description: String {
-        switch self { case .sqlite(let msg): return "SQLite: \(msg)" }
+        switch self {
+        case .sqlite(let msg): return "SQLite: \(msg)"
+        case .invalid(let msg): return msg
+        }
     }
+    public var errorDescription: String? { description }
 }
 
 /// Time entries persisted in SQLite. Times are stored as UTC epoch seconds.
@@ -90,6 +96,87 @@ public final class Store {
         }
     }
 
+    // MARK: - Editing
+    //
+    // Rules for manual edits: end >= start; only one entry may be open (end == nil);
+    // intervals may touch but not overlap, otherwise totals would count the same time twice.
+    // An open entry counts as reaching into the future.
+
+    /// Adds a finished (or, if nothing is running, an open) entry.
+    @discardableResult
+    public func insert(activity: Activity, start: Date, end: Date?) throws -> Entry {
+        try transaction {
+            try validate(id: nil, start: start, end: end)
+            try run("INSERT INTO entries (activity, start, end) VALUES (?, ?, ?)") { stmt in
+                bind(stmt, activity: activity, start: start, end: end)
+            }
+            return Entry(id: sqlite3_last_insert_rowid(db), activity: activity, start: start, end: end)
+        }
+    }
+
+    public func update(id: Int64, activity: Activity, start: Date, end: Date?) throws {
+        try transaction {
+            // A stale editor must not reopen an entry that was stopped meanwhile.
+            if end == nil, try openEntry()?.id != id {
+                throw StoreError.invalid("This entry is no longer running.")
+            }
+            try validate(id: id, start: start, end: end)
+            try run("UPDATE entries SET activity = ?, start = ?, end = ? WHERE id = ?") { stmt in
+                bind(stmt, activity: activity, start: start, end: end)
+                sqlite3_bind_int64(stmt, 4, id)
+            }
+            if sqlite3_changes(db) == 0 { throw StoreError.invalid("The entry no longer exists.") }
+        }
+    }
+
+    public func delete(id: Int64) throws {
+        try run("DELETE FROM entries WHERE id = ?") { stmt in
+            sqlite3_bind_int64(stmt, 1, id)
+        }
+        if sqlite3_changes(db) == 0 { throw StoreError.invalid("The entry no longer exists.") }
+    }
+
+    /// Checks the edit rules against every entry except `id`.
+    private func validate(id: Int64?, start: Date, end: Date?) throws {
+        if let end, end < start {
+            throw StoreError.invalid("End must not be earlier than start.")
+        }
+        if end == nil, let open = try openEntry(), open.id != id {
+            throw StoreError.invalid("Another entry is running. Only one entry can be open.")
+        }
+        // Strict comparisons: back-to-back entries (A.end == B.start) are fine.
+        let others = try query("""
+            SELECT id, activity, start, end FROM entries
+            WHERE id != ? AND start < ? AND (end IS NULL OR end > ?)
+            ORDER BY start
+            """) { stmt in
+            sqlite3_bind_int64(stmt, 1, id ?? -1)
+            sqlite3_bind_double(stmt, 2, end?.timeIntervalSince1970 ?? .infinity)
+            sqlite3_bind_double(stmt, 3, start.timeIntervalSince1970)
+        }
+        if let other = others.first {
+            throw StoreError.invalid("Overlaps \(other.activity.title) \(Self.time(other.start))–\(other.end.map(Self.time) ?? "now").")
+        }
+    }
+
+    /// "Oct 5 09:12:37": seconds included so a clash shorter than a minute still makes sense.
+    private static func time(_ date: Date) -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "MMM d HH:mm:ss"
+        return df.string(from: date)
+    }
+
+    private func bind(_ stmt: OpaquePointer?, activity: Activity, start: Date, end: Date?) {
+        sqlite3_bind_text(stmt, 1, activity.rawValue, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, start.timeIntervalSince1970)
+        if let end {
+            sqlite3_bind_double(stmt, 3, end.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(stmt, 3)
+        }
+    }
+
     // MARK: - Queries
 
     public func openEntry() throws -> Entry? {
@@ -113,6 +200,18 @@ public final class Store {
     }
 
     // MARK: - SQLite helpers
+
+    private func transaction<T>(_ body: () throws -> T) throws -> T {
+        try exec("BEGIN IMMEDIATE")
+        do {
+            let result = try body()
+            try exec("COMMIT")
+            return result
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
 
     private func exec(_ sql: String) throws {
         if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {

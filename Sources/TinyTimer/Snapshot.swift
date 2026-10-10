@@ -25,8 +25,25 @@ enum Snapshot {
                    to: dir.appendingPathComponent("quickswitch.png"))
         try render(MainView(tracker: tracker, selection: DaySelection()).frame(width: 520, height: 420),
                    to: dir.appendingPathComponent("main.png"))
+        // Editor sheet content: a finished entry, and the running one with an inline error.
+        let entries = try store.allEntries()
+        try render(EntryEditorView(model: EntryEditor(entry: entries[1]), tracker: tracker),
+                   to: dir.appendingPathComponent("editor.png"))
+        let running = EntryEditor(entry: entries[entries.count - 1])
+        do {   // A real overlap error, for the wrapping of its full text.
+            try store.insert(activity: .meeting, start: entries[0].start, end: entries[1].end)
+        } catch {
+            running.error = error.localizedDescription
+        }
+        try render(EntryEditorView(model: running, tracker: tracker),
+                   to: dir.appendingPathComponent("editor-running.png"))
         try render(StatisticsView(tracker: tracker, day: Date()).frame(width: 480, height: 220),
                    to: dir.appendingPathComponent("stats.png"))
+        // Throwaway suite so the snapshot neither reads nor writes the user's settings.
+        let suite = "tinytimer-snapshot-\(UUID())"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        try render(SettingsView(dataURL: path, model: SettingsModel(), preferences: Preferences(defaults: UserDefaults(suiteName: suite)!)),
+                   to: dir.appendingPathComponent("settings.png"))
     }
 
     private static func render<V: View>(_ view: V, to url: URL) throws {

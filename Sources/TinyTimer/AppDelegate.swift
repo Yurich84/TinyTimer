@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: HotKey?
     private var mainWindow: NSWindow?
     private let daySelection = DaySelection()
+    private let preferences = Preferences()
     private var settingsWindow: NSWindow?
     private var sleptActivity: (activity: Activity, at: Date)?
 
@@ -29,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         quickSwitch = QuickSwitchController(tracker: tracker)
-        status = StatusController(tracker: tracker)
+        status = StatusController(tracker: tracker, preferences: preferences)
         status.onOpenWindow = { [weak self] in self?.showMainWindow() }
         status.onExport = { [weak self] in self?.exportCSV() }
         status.onSettings = { [weak self] in self?.showSettings() }
@@ -84,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(dataURL: tracker.dataURL, model: SettingsModel())))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(dataURL: tracker.dataURL, model: SettingsModel(), preferences: preferences)))
             window.title = "TinyTimer Settings"
             window.styleMask.remove([.resizable, .miniaturizable])
             window.isReleasedWhenClosed = false
@@ -103,15 +104,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func exportCSV() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "tinytimer-\(Date().formatted(.iso8601.year().month().day())).csv"
+        let options = ExportOptionsView(panel: panel, preferences: preferences)
+        panel.accessoryView = options
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let rows = Report.dailyRows(try tracker.store.allEntries(), now: Date())
-            try Report.csv(rows).write(to: url, atomically: true, encoding: .utf8)
+            let csv = Report.export(try tracker.store.allEntries(), format: preferences.exportFormat,
+                                    decimalHours: preferences.exportDecimalHours, now: Date())
+            try csv.write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+}
+
+/// Save panel accessory: format pop-up and decimal hours checkbox. Choices go straight to `Preferences`.
+@MainActor
+private final class ExportOptionsView: NSView {
+    private weak var panel: NSSavePanel?
+    private let preferences: Preferences
+    private let formatPopUp = NSPopUpButton()
+    private let decimalCheckbox = NSButton(checkboxWithTitle: "Durations as decimal hours", target: nil, action: nil)
+
+    init(panel: NSSavePanel, preferences: Preferences) {
+        self.panel = panel
+        self.preferences = preferences
+        super.init(frame: .zero)
+        formatPopUp.addItems(withTitles: ExportFormat.allCases.map(\.title))
+        formatPopUp.selectItem(at: ExportFormat.allCases.firstIndex(of: preferences.exportFormat) ?? 0)
+        formatPopUp.target = self
+        formatPopUp.action = #selector(formatChanged)
+        decimalCheckbox.state = preferences.exportDecimalHours ? .on : .off
+        decimalCheckbox.target = self
+        decimalCheckbox.action = #selector(decimalChanged)
+
+        let formatRow = NSStackView(views: [NSTextField(labelWithString: "Format:"), formatPopUp])
+        let stack = NSStackView(views: [formatRow, decimalCheckbox])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        frame.size = stack.fittingSize
+        updateFileName()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func formatChanged() {
+        preferences.exportFormat = ExportFormat.allCases[formatPopUp.indexOfSelectedItem]
+        updateFileName()
+    }
+
+    @objc private func decimalChanged() {
+        preferences.exportDecimalHours = decimalCheckbox.state == .on
+    }
+
+    /// Default name plus the format suffix: "tinytimer-2026-10-10-entries.csv". Replaces a name typed by the user.
+    private func updateFileName() {
+        panel?.nameFieldStringValue = "tinytimer-\(Date().formatted(.iso8601.year().month().day()))\(preferences.exportFormat.fileSuffix).csv"
     }
 }

@@ -1,3 +1,7 @@
 .build/
 build/
 *.app
+*.xcarchive
+TinyTimer.xcodeproj/
+xcuserdata/
+DerivedData/
