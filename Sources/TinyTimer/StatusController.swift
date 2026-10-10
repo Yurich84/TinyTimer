@@ -3,7 +3,8 @@ import Combine
 import SwiftUI
 import TinyTimerCore
 
-/// Menu bar item: hourglass icon + "D 42:17" / "D 1:42:17" while running. Left click stops the running activity or
+/// Menu bar item: hourglass icon + "D 42:17" / "D 1:42:17" while running, today's total ("00:00" when empty)
+/// while idle. Left click stops the running activity or
 /// starts the default one; right click (or ⌃-click) opens the dropdown menu.
 @MainActor
 final class StatusController: NSObject, NSMenuDelegate {
@@ -67,9 +68,24 @@ final class StatusController: NSObject, NSMenuDelegate {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         }
         // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 42:17").
-        button.title = current.map { " \($0.activity.title.prefix(1)) " + Format.timer(elapsed(of: $0, now: now, mode: timerMode)) } ?? ""
+        if let current {
+            button.title = Self.runningTitle(initial: current.activity.title.prefix(1), elapsed: elapsed(of: current, now: now, mode: timerMode))
+        } else {
+            // One SQLite query per tick; re-runs on every tick, so the total resets at midnight and follows History edits.
+            button.title = Self.idleTitle(dayTotal: tracker.totals(on: now, now: now).values.reduce(0, +))
+        }
         button.toolTip = current.map { "TinyTimer — \($0.activity.title) · click: stop, right-click: menu" }
             ?? "TinyTimer — Idle · click: start \(defaultActivity.title), right-click: menu"
+    }
+
+    /// " D 42:17": initial of the running activity + its timer.
+    nonisolated static func runningTitle(initial: Substring, elapsed: TimeInterval) -> String {
+        " \(initial) " + Format.timer(elapsed)
+    }
+
+    /// " 1:42:17": today's total across all activities, " 00:00" when nothing was tracked.
+    nonisolated static func idleTitle(dayTotal: TimeInterval) -> String {
+        " " + Format.timer(dayTotal)
     }
 
     private func elapsed(of entry: Entry, now: Date, mode: TimerMode) -> TimeInterval {
