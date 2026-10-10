@@ -14,18 +14,24 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       VERSION: 1.0.${{ github.run_number }}
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Toolchain
-        run: swift --version
+        run: |
+          xcodebuild -version
+          ls -d /Applications/Xcode*
+          swift --version
+
+      - name: Build
+        run: swift build --build-system native
 
       - name: Self-test
-        run: swift run --build-system native TinyTimer --selftest
+        run: swift run --build-system native --skip-build TinyTimer --selftest
 
       - name: Build app bundle
         run: ./bundle.sh
