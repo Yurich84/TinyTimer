@@ -19,6 +19,8 @@ final class QuickSwitchController {
     private var panel: KeyPanel?
     private var keyMonitor: Any?
     private var resignObserver: NSObjectProtocol?
+    /// The list as it was when the panel opened; keys and rows refer to it.
+    private var activities: [Activity] = []
 
     init(tracker: Tracker) {
         self.tracker = tracker
@@ -29,10 +31,11 @@ final class QuickSwitchController {
     }
 
     private func show() {
-        let activities = Activity.allCases
+        activities = tracker.activities
+        guard !activities.isEmpty else { return }
         model.selection = tracker.current.flatMap { activities.firstIndex(of: $0.activity) } ?? 0
 
-        let view = QuickSwitchView(model: model, current: tracker.current?.activity) { [weak self] activity in
+        let view = QuickSwitchView(model: model, activities: activities, current: tracker.current?.activity) { [weak self] activity in
             self?.choose(activity)
         }
         let hosting = NSHostingView(rootView: view)
@@ -73,20 +76,20 @@ final class QuickSwitchController {
     }
 
     private func handle(_ event: NSEvent) -> Bool {
-        let count = Activity.allCases.count
+        let count = activities.count
         switch Int(event.keyCode) {
         case 126: // ↑
             model.selection = (model.selection - 1 + count) % count
         case 125: // ↓
             model.selection = (model.selection + 1) % count
         case 36, 76: // Return, keypad Enter
-            choose(Activity.allCases[model.selection])
+            choose(activities[model.selection])
         case 53: // Esc
             close()
         default:
-            // 1…9 picks directly.
-            if let n = Int(event.charactersIgnoringModifiers ?? ""), (1...count).contains(n) {
-                choose(Activity.allCases[n - 1])
+            // 1…9 picks one of the first nine directly.
+            if let n = Int(event.charactersIgnoringModifiers ?? ""), (1...min(count, 9)).contains(n) {
+                choose(activities[n - 1])
             } else {
                 return false
             }
@@ -112,6 +115,7 @@ final class QuickSwitchController {
 
 struct QuickSwitchView: View {
     @ObservedObject var model: QuickSwitchModel
+    let activities: [Activity]
     let current: Activity?
     let onChoose: (Activity) -> Void
 
@@ -120,14 +124,16 @@ struct QuickSwitchView: View {
             Text("What are you doing?")
                 .font(.headline)
             VStack(spacing: 2) {
-                ForEach(Array(Activity.allCases.enumerated()), id: \.element) { index, activity in
+                ForEach(Array(activities.enumerated()), id: \.element) { index, activity in
                     HStack {
                         Text(activity.title)
                         Spacer()
                         if activity == current {
                             Image(systemName: "record.circle").foregroundStyle(.green)
                         }
-                        Text("\(index + 1)").foregroundStyle(.tertiary)
+                        if index < 9 {
+                            Text("\(index + 1)").foregroundStyle(.tertiary)
+                        }
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)

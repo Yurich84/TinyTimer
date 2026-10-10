@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings() {
         if settingsWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(dataURL: tracker.dataURL, model: SettingsModel(), preferences: preferences)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(dataURL: tracker.dataURL, model: SettingsModel(), preferences: preferences, tracker: tracker)))
             window.title = "TinyTimer Settings"
             window.styleMask.remove([.resizable, .miniaturizable])
             window.isReleasedWhenClosed = false
@@ -109,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let csv = Report.export(try tracker.store.allEntries(), format: preferences.exportFormat,
+            let csv = Report.export(try tracker.store.allEntries(), format: preferences.exportFormat, listed: tracker.activities,
                                     decimalHours: preferences.exportDecimalHours, now: Date())
             try csv.write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])

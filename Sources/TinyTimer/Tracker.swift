@@ -9,6 +9,8 @@ final class Tracker: ObservableObject {
     let dataURL: URL
 
     @Published private(set) var current: Entry?
+    /// The user's activity list, in display order. Never empty.
+    @Published private(set) var activities: [Activity]
     @Published private(set) var now = Date()
     /// Bumped on every write so views re-query the store.
     @Published private(set) var revision = 0
@@ -18,6 +20,7 @@ final class Tracker: ObservableObject {
     init(store: Store, dataURL: URL) {
         self.store = store
         self.dataURL = dataURL
+        activities = Self.load(store)
         // An entry left open by a crash keeps running.
         current = try? store.openEntry()
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -71,6 +74,35 @@ final class Tracker: ObservableObject {
         }
     }
 
+    // MARK: - Activity list
+    // Throw so Settings can show the error inline. Entries of a deleted activity are kept.
+
+    func addActivity(named name: String) throws {
+        try store.addActivity(named: name)
+        reloadActivities()
+    }
+
+    func deleteActivity(_ activity: Activity) throws {
+        try store.deleteActivity(activity)
+        reloadActivities()
+    }
+
+    func moveActivity(_ activity: Activity, by offset: Int) throws {
+        try store.moveActivity(activity, by: offset)
+        reloadActivities()
+    }
+
+    private func reloadActivities() {
+        activities = Self.load(store)
+        touch()
+    }
+
+    /// The defaults if the list can't be read, so menus and pickers always have something to show.
+    private static func load(_ store: Store) -> [Activity] {
+        let list = (try? store.activities()) ?? []
+        return list.isEmpty ? Activity.defaults : list
+    }
+
     /// An edit may have changed, closed or removed the running entry.
     private func reload() {
         current = try? store.openEntry()
@@ -83,7 +115,7 @@ final class Tracker: ObservableObject {
 
     /// `now` overrides the clock: @Published sinks run before `self.now` takes the new value.
     func totals(on day: Date, now: Date? = nil) -> [Activity: TimeInterval] {
-        Report.totals(entries(on: day), in: Report.day(containing: day), now: now ?? self.now)
+        Report.totals(entries(on: day), in: Report.day(containing: day), listed: activities, now: now ?? self.now)
     }
 
     var elapsed: TimeInterval {

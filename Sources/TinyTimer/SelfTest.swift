@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import TinyTimerCore
 
 /// Logic checks runnable without XCTest (Command Line Tools ship no test frameworks):
@@ -32,7 +33,9 @@ enum SelfTest {
 
             // Totals for the day.
             let day5 = Report.day(containing: at(5, 12), calendar: cal)
-            let totals = Report.totals(try store.entries(overlapping: day5), in: day5, now: at(5, 20))
+            check(try store.activities() == Activity.defaults, "new store is seeded with the defaults")
+            let listed = Activity.defaults
+            let totals = Report.totals(try store.entries(overlapping: day5), in: day5, listed: listed, now: at(5, 20))
             check(totals[.development] == 2 * 3600 + 17 * 60 + 57 * 60, "development total")
             check(totals[.meeting] == 46 * 60, "meeting total")
             check(totals[.investigation] == 0, "investigation zero")
@@ -42,9 +45,9 @@ enum SelfTest {
             check(try store.openEntry()?.activity == .investigation, "openEntry running")
             let now = at(6, 1, 30)
             let day6 = Report.day(containing: now, calendar: cal)
-            let day6Totals = Report.totals(try store.entries(overlapping: day6), in: day6, now: now)
+            let day6Totals = Report.totals(try store.entries(overlapping: day6), in: day6, listed: listed, now: now)
             check(day6Totals[.investigation] == 90 * 60, "midnight clip, next day")
-            let rows = Report.dailyRows(try store.allEntries(), now: now, calendar: cal)
+            let rows = Report.dailyRows(try store.allEntries(), listed: listed, now: now, calendar: cal)
             check(rows.count == 4, "daily rows count (dev, inv, meet on 5th; inv on 6th)")
 
             let csv = Report.csv(rows, calendar: cal)
@@ -60,22 +63,22 @@ enum SelfTest {
 
             // Export formats over the same entries; the running one ends at `now`.
             let entries = try store.allEntries()
-            check(Report.export(entries, format: .daysByActivity, now: now, calendar: cal) == expected, "export by activity equals csv")
-            let days = Report.export(entries, format: .days, now: now, calendar: cal)
+            check(Report.export(entries, format: .daysByActivity, listed: listed, now: now, calendar: cal) == expected, "export by activity equals csv")
+            let days = Report.export(entries, format: .days, listed: listed, now: now, calendar: cal)
             check(days == """
                 date,Development,Investigation,Meeting,total
                 2026-10-05,03:14:00,01:00:00,00:46:00,05:00:00
                 2026-10-06,00:00:00,01:30:00,00:00:00,01:30:00
 
                 """, "export one row per day:\n\(days)")
-            let daysDecimal = Report.export(entries, format: .days, decimalHours: true, now: now, calendar: cal)
+            let daysDecimal = Report.export(entries, format: .days, listed: listed, decimalHours: true, now: now, calendar: cal)
             check(daysDecimal == """
                 date,Development,Investigation,Meeting,total
                 2026-10-05,3.23,1.00,0.77,5.00
                 2026-10-06,0.00,1.50,0.00,1.50
 
                 """, "export one row per day, decimal hours:\n\(daysDecimal)")
-            let perEntry = Report.export(entries, format: .entries, now: now, calendar: cal)
+            let perEntry = Report.export(entries, format: .entries, listed: listed, now: now, calendar: cal)
             check(perEntry == """
                 date,activity,start,end,duration
                 2026-10-05,Development,09:00:00,11:17:00,02:17:00
@@ -88,7 +91,7 @@ enum SelfTest {
             let overnightCSV = Report.entriesCSV(overnight, decimalHours: true, now: now, calendar: cal)
             check(overnightCSV == "date,activity,start,end,duration\n2026-10-08,Meeting,23:30:00,00:15:00,0.75\n",
                   "entry crossing midnight is one row dated by start:\n\(overnightCSV)")
-            check(Report.export([], format: .days, now: now, calendar: cal) == "date,Development,Investigation,Meeting,total\n", "empty export has header only")
+            check(Report.export([], format: .days, listed: listed, now: now, calendar: cal) == "date,Development,Investigation,Meeting,total\n", "empty export has header only")
             check(Format.hours(5400) == "1.50", "decimal hours")
             check(Format.hours(0) == "0.00", "decimal hours zero")
 
@@ -109,11 +112,15 @@ enum SelfTest {
             let suite = "tinytimer-selftest-\(UUID())"
             defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
             let defaults = UserDefaults(suiteName: suite)!
-            check(Preferences(defaults: defaults).defaultActivity == .development, "default activity is development")
-            Preferences(defaults: defaults).defaultActivity = .meeting
-            check(Preferences(defaults: defaults).defaultActivity == .meeting, "default activity persists")
+            check(Preferences(defaults: defaults).defaultActivity(in: listed) == .development, "default activity is the first listed")
+            Preferences(defaults: defaults).defaultActivityName = Activity.meeting.name
+            check(Preferences(defaults: defaults).defaultActivity(in: listed) == .meeting, "default activity persists")
+            check(Preferences(defaults: defaults).defaultActivity(in: [.investigation, .development]) == .investigation,
+                  "deleted default activity falls back to the first listed")
             defaults.set("Gardening", forKey: Preferences.Key.defaultActivity)
-            check(Preferences(defaults: defaults).defaultActivity == .development, "unknown activity falls back")
+            check(Preferences(defaults: defaults).defaultActivity(in: listed) == .development, "unknown activity falls back")
+            check(Preferences(defaults: defaults).defaultActivity(in: [Activity("Gardening"), .meeting]) == Activity("Gardening"),
+                  "custom default activity resolves")
             check(Preferences(defaults: defaults).timerMode == .session, "timer mode is session")
             Preferences(defaults: defaults).timerMode = .dayTotal
             check(Preferences(defaults: defaults).timerMode == .dayTotal, "timer mode persists")
@@ -166,12 +173,80 @@ enum SelfTest {
             check(rejects { try edits.delete(id: b.id) }, "delete unknown id rejected")
             check(StoreError.invalid("End must not be earlier than start.").localizedDescription == "End must not be earlier than start.",
                   "error message reaches localizedDescription")
+
+            try activityChecks(path: path, at: at, cal: cal)
         } catch {
             check(false, "threw \(error)")
         }
 
         print(failures == 0 ? "selftest: OK" : "selftest: \(failures) failure(s)")
         return failures == 0
+    }
+
+    /// Activity list: seeding, add, delete, move, validation, and entries of deleted activities.
+    private static func activityChecks(path: String, at: (Int, Int, Int) -> Date, cal: Calendar) throws {
+        // A database from before the activity list: entries only, including a name that is not a default.
+        let legacyPath = path + "-legacy"
+        defer { try? FileManager.default.removeItem(atPath: legacyPath) }
+        var db: OpaquePointer?
+        sqlite3_open(legacyPath, &db)
+        sqlite3_exec(db, """
+            CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, activity TEXT NOT NULL, start REAL NOT NULL, end REAL);
+            INSERT INTO entries (activity, start, end) VALUES
+                ('Gardening', \(at(4, 9, 0).timeIntervalSince1970), \(at(4, 10, 0).timeIntervalSince1970)),
+                ('Development', \(at(4, 10, 0).timeIntervalSince1970), \(at(4, 11, 0).timeIntervalSince1970)),
+                ('meeting', \(at(4, 11, 0).timeIntervalSince1970), \(at(4, 11, 30).timeIntervalSince1970));
+            """, nil, nil, nil)
+        sqlite3_close(db)
+
+        let gardening = Activity("Gardening")
+        var store = try Store(path: legacyPath)
+        check(try store.activities() == Activity.defaults + [gardening],
+              "seeded once with defaults plus names from entries, case-insensitive duplicates merged")
+        check(try store.allEntries().count == 3, "all legacy entries load, whatever their activity")
+
+        // Add: trimmed; empty and case-insensitive duplicates rejected.
+        let reading = try store.addActivity(named: "  Reading \n")
+        check(reading == Activity("Reading"), "added name is trimmed")
+        check(try store.activities().last == reading, "added activity goes last")
+        check(rejects { try store.addActivity(named: "   ") }, "empty name rejected")
+        check(rejects { try store.addActivity(named: "reading") }, "duplicate name rejected regardless of case")
+        check(rejects { try store.addActivity(named: " DEVELOPMENT") }, "duplicate default rejected regardless of case")
+        check((try? Activity.validatedName("Garden, pond", existing: [gardening])) == "Garden, pond", "validation accepts a new name")
+
+        // Move.
+        try store.moveActivity(reading, by: -10)
+        check(try store.activities().first == reading, "move up clamps to the top")
+        try store.moveActivity(reading, by: 1)
+        check(try store.activities().map(\.name) == ["Development", "Reading", "Investigation", "Meeting", "Gardening"], "move down by one")
+
+        // Delete keeps history; deleted defaults are not re-seeded on the next open.
+        try store.deleteActivity(.development)
+        try store.deleteActivity(gardening)
+        check(rejects { try store.deleteActivity(gardening) }, "deleting a missing activity rejected")
+        store = try Store(path: legacyPath)
+        let listed = try store.activities()
+        check(listed == [reading, .investigation, .meeting], "deleted activities stay deleted after reopening")
+        let entries = try store.allEntries()
+        check(entries.map(\.activity) == [gardening, .development, Activity("meeting")], "entries of deleted activities still load")
+        let day4 = Report.day(containing: at(4, 12, 0), calendar: cal)
+        let totals = Report.totals(entries, in: day4, listed: listed, now: at(4, 20, 0))
+        check(totals[gardening] == 3600 && totals[.development] == 3600, "deleted activities counted in totals")
+        check(totals.values.reduce(0, +) == 2.5 * 3600, "day total includes deleted activities")
+        check(Report.activities(listed: listed, entries: entries) == listed + [gardening, .development, Activity("meeting")],
+              "report activities: listed first, then unlisted in order of first use")
+        let days = Report.export(entries, format: .days, listed: listed, now: at(4, 20, 0), calendar: cal)
+        check(days == """
+            date,Reading,Investigation,Meeting,Gardening,Development,meeting,total
+            2026-10-04,00:00:00,00:00:00,00:00:00,01:00:00,01:00:00,00:30:00,02:30:00
+
+            """, "export keeps columns of deleted activities:\n\(days)")
+
+        // The last activity can't be deleted.
+        try store.deleteActivity(reading)
+        try store.deleteActivity(.investigation)
+        check(rejects { try store.deleteActivity(.meeting) }, "last activity can't be deleted")
+        check(try store.activities() == [.meeting], "one activity left")
     }
 
     /// True if `body` throws a validation error (not an SQLite one).

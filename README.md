@@ -2,18 +2,23 @@
 
 [![Release](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml/badge.svg)](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml)
 
-Hourglass icon + `D 42:17` / `D 1:42:17` (initial of the current activity; hours hidden while 0) in the macOS status bar. Activities: Development, Investigation, Meeting.
+Hourglass icon + `D 42:17` / `D 1:42:17` (initial of the current activity; hours hidden while 0) in the macOS status bar. When idle, the status bar shows today's total for all activities (`00:00` if nothing is tracked).
+Activities are configurable in Settings; the defaults are Development, Investigation, Meeting.
 Starting an activity stops the previous one. Every interval is a row in SQLite
-(`~/Library/Application Support/TinyTimer/tinytimer.sqlite`, table `entries(id, activity, start, end)`).
+(`~/Library/Application Support/TinyTimer/tinytimer.sqlite`, table `entries(id, activity, start, end)`;
+the activity list is in table `activities(id, name, position)`).
 
 - **Left click** — stop the running activity, or start the default one (Settings → Default activity)
 - **Right click** (or ⌃-click) — menu
-- **⌥⌘T** — quick switch popup (↑↓, Enter, 1–3, Esc)
+- **⌥⌘T** — quick switch popup (↑↓, Enter, 1–9 for the first nine activities, Esc)
 - **Today** — window with History / Statistics tabs and day navigation. In History: double-click or
   right-click a row to edit or delete it, **Add…** for a manual entry. Overlapping entries are rejected.
 - **Export CSV** — format chosen in the save panel (`HH:MM:SS` or decimal hours):
   one row per day (`date,<activity…>,total`), one row per day per activity (`date,activity,duration`),
   or one row per entry (`date,activity,start,end,duration`)
+- **Settings → Activities** — add an activity (name + **Add**), move it up or down, or delete it.
+  Names are trimmed and must be unique (case is ignored). The last activity cannot be deleted.
+  Deleting an activity keeps its entries: they stay in History, Statistics and CSV exports.
 - **Settings → Timer shows** — time since the last switch, or today's total for the current activity
 - Sleep stops the running entry; it resumes on wake if the sleep was shorter than 15 min.
 

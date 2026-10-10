@@ -12,9 +12,10 @@ final class Preferences: ObservableObject {
 
     private let defaults: UserDefaults
 
-    /// Started by a left click on the status item while idle.
-    @Published var defaultActivity: Activity {
-        didSet { defaults.set(defaultActivity.rawValue, forKey: Key.defaultActivity) }
+    /// Name of the activity started by a left click on the status item while idle; nil until chosen.
+    /// Resolve it with `defaultActivity(in:)`: the activity may have been deleted since.
+    @Published var defaultActivityName: String? {
+        didSet { defaults.set(defaultActivityName, forKey: Key.defaultActivity) }
     }
 
     /// What the status bar timer counts.
@@ -35,10 +36,15 @@ final class Preferences: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         // Unknown or missing values fall back to the default.
-        defaultActivity = defaults.string(forKey: Key.defaultActivity).flatMap(Activity.init(rawValue:)) ?? .development
+        defaultActivityName = defaults.string(forKey: Key.defaultActivity)
         timerMode = defaults.string(forKey: Key.timerMode).flatMap(TimerMode.init(rawValue:)) ?? .session
         exportFormat = defaults.string(forKey: Key.exportFormat).flatMap(ExportFormat.init(rawValue:)) ?? .days
         exportDecimalHours = defaults.bool(forKey: Key.exportDecimalHours)
+    }
+
+    /// The chosen default activity if it is still in `activities`, otherwise the first listed one.
+    func defaultActivity(in activities: [Activity]) -> Activity? {
+        activities.first { $0.name == defaultActivityName } ?? activities.first
     }
 }
 

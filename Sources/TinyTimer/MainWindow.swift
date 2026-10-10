@@ -99,7 +99,10 @@ private struct HistoryView: View {
             }
             HStack {
                 Spacer()
-                Button("Add…") { selection.editor = EntryEditor(newOn: day, before: entries.first) }
+                Button("Add…") {
+                    selection.editor = EntryEditor(newOn: day, before: entries.first,
+                                                   defaultActivity: tracker.activities.first ?? .development)
+                }
             }
             .padding([.horizontal, .bottom], 8)
         }
@@ -127,19 +130,25 @@ final class EntryEditor: ObservableObject, Identifiable {
     @Published var error: String?
     /// Exact time of "Stop now"; kept to the second like an untouched field.
     private var stoppedAt: Date?
+    /// The activity the editor opened with; may have been deleted from the list since.
+    private let initialActivity: Activity
 
     init(entry: Entry) {
         self.entry = entry
         activity = entry.activity
+        initialActivity = entry.activity
         start = entry.start
         end = entry.end
     }
 
     /// A new 30-minute entry on `day`, ending where the day's first entry (`next`) starts,
     /// e.g. for a morning before the timer was started. Without room for it: 09:00–09:30.
-    init(newOn day: Date, before next: Entry?, calendar: Calendar = .current) {
+    /// Takes the activity of `next`, or `defaultActivity` on an empty day.
+    init(newOn day: Date, before next: Entry?, defaultActivity: Activity, calendar: Calendar = .current) {
         entry = nil
-        activity = next?.activity ?? .development
+        let activity = next?.activity ?? defaultActivity
+        self.activity = activity
+        initialActivity = activity
         let length: TimeInterval = 30 * 60
         let dayStart = calendar.startOfDay(for: day)
         var end = calendar.date(byAdding: .minute, value: 9 * 60 + 30, to: dayStart)!
@@ -155,6 +164,11 @@ final class EntryEditor: ObservableObject, Identifiable {
     var values: (start: Date, end: Date?) {
         func pick(_ value: Date, _ original: Date?) -> Date { value == original ? value : Self.minute(value) }
         return (pick(start, entry?.start), end.map { pick($0, entry?.end ?? stoppedAt) })
+    }
+
+    /// Picker items: the list, plus the initial activity if it was deleted, so editing keeps it selectable.
+    func choices(listed: [Activity]) -> [Activity] {
+        listed.contains(initialActivity) ? listed : listed + [initialActivity]
     }
 
     func stopNow() {
@@ -176,7 +190,7 @@ struct EntryEditorView: View {
         VStack(spacing: 0) {
             Form {
                 Picker("Activity", selection: $model.activity) {
-                    ForEach(Activity.allCases) { Text($0.title).tag($0) }
+                    ForEach(model.choices(listed: tracker.activities)) { Text($0.title).tag($0) }
                 }
                 DatePicker("Start", selection: $model.start, displayedComponents: [.date, .hourAndMinute])
                 if let end = model.end {
@@ -239,8 +253,10 @@ struct StatisticsView: View {
         let totals = tracker.totals(on: day)
         let total = totals.values.reduce(0, +)
         let maxValue = max(totals.values.max() ?? 0, 1)
+        // Listed activities, then deleted ones that still have time on this day.
+        let rows = Report.activities(listed: tracker.activities, entries: tracker.entries(on: day))
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Activity.allCases) { activity in
+            ForEach(rows) { activity in
                 let value = totals[activity] ?? 0
                 HStack(spacing: 12) {
                     Text(activity.title).frame(width: 100, alignment: .leading)

@@ -16,7 +16,8 @@ public enum StoreError: Error, CustomStringConvertible, LocalizedError {
     public var errorDescription: String? { description }
 }
 
-/// Time entries persisted in SQLite. Times are stored as UTC epoch seconds.
+/// Time entries and the activity list persisted in SQLite. Times are stored as UTC epoch seconds.
+/// Entries store the activity by name, so deleting an activity from the list keeps its history.
 public final class Store {
     private var db: OpaquePointer?
 
@@ -34,6 +35,32 @@ public final class Store {
             );
             CREATE INDEX IF NOT EXISTS entries_start ON entries(start);
             """)
+        try createActivities()
+    }
+
+    /// Creates and seeds the `activities` table once: the defaults plus every activity already used by entries.
+    /// Never re-seeds an existing table, even an empty one, so deleted defaults stay deleted.
+    private func createActivities() throws {
+        try transaction {
+            let exists = try strings("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activities'")
+            guard exists.isEmpty else { return }
+            try exec("""
+                CREATE TABLE activities (
+                    id       INTEGER PRIMARY KEY,
+                    name     TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    position INTEGER NOT NULL
+                );
+                """)
+            let used = try strings("SELECT activity FROM entries GROUP BY activity ORDER BY MIN(start)")
+            let names = Activity.defaults.map(\.name) + used.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            for (position, name) in names.enumerated() {
+                // OR IGNORE: names differing only in case share one row.
+                try run("INSERT OR IGNORE INTO activities (name, position) VALUES (?, ?)") { stmt in
+                    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+                    sqlite3_bind_int64(stmt, 2, Int64(position))
+                }
+            }
+        }
     }
 
     deinit { sqlite3_close(db) }
@@ -74,7 +101,7 @@ public final class Store {
         do {
             try closeOpen(at: date)
             try run("INSERT INTO entries (activity, start) VALUES (?, ?)") { stmt in
-                sqlite3_bind_text(stmt, 1, activity.rawValue, -1, SQLITE_TRANSIENT)
+                sqlite3_bind_text(stmt, 1, activity.name, -1, SQLITE_TRANSIENT)
                 sqlite3_bind_double(stmt, 2, date.timeIntervalSince1970)
             }
             let id = sqlite3_last_insert_rowid(db)
@@ -168,12 +195,59 @@ public final class Store {
     }
 
     private func bind(_ stmt: OpaquePointer?, activity: Activity, start: Date, end: Date?) {
-        sqlite3_bind_text(stmt, 1, activity.rawValue, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, activity.name, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(stmt, 2, start.timeIntervalSince1970)
         if let end {
             sqlite3_bind_double(stmt, 3, end.timeIntervalSince1970)
         } else {
             sqlite3_bind_null(stmt, 3)
+        }
+    }
+
+    // MARK: - Activities
+
+    /// The activity list in display order.
+    public func activities() throws -> [Activity] {
+        try strings("SELECT name FROM activities ORDER BY position, id").map(Activity.init)
+    }
+
+    /// Appends an activity. The name is trimmed; empty names and case-insensitive duplicates are rejected.
+    @discardableResult
+    public func addActivity(named raw: String) throws -> Activity {
+        try transaction {
+            let name = try Activity.validatedName(raw, existing: activities())
+            try run("INSERT INTO activities (name, position) VALUES (?, (SELECT COALESCE(MAX(position), -1) + 1 FROM activities))") { stmt in
+                sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT)
+            }
+            return Activity(name)
+        }
+    }
+
+    /// Removes an activity from the list. Its entries are kept. The last activity can't be deleted.
+    public func deleteActivity(_ activity: Activity) throws {
+        try transaction {
+            let list = try activities()
+            guard list.contains(activity) else { throw StoreError.invalid("\(activity.title) is no longer in the list.") }
+            guard list.count > 1 else { throw StoreError.invalid("Keep at least one activity.") }
+            try run("DELETE FROM activities WHERE name = ?") { stmt in
+                sqlite3_bind_text(stmt, 1, activity.name, -1, SQLITE_TRANSIENT)
+            }
+        }
+    }
+
+    /// Moves an activity `offset` places up (negative) or down (positive) in the list, clamped to its ends.
+    public func moveActivity(_ activity: Activity, by offset: Int) throws {
+        try transaction {
+            var list = try activities()
+            guard let index = list.firstIndex(of: activity) else { throw StoreError.invalid("\(activity.title) is no longer in the list.") }
+            let target = min(max(index + offset, 0), list.count - 1)
+            list.insert(list.remove(at: index), at: target)
+            for (position, item) in list.enumerated() {
+                try run("UPDATE activities SET position = ? WHERE name = ?") { stmt in
+                    sqlite3_bind_int64(stmt, 1, Int64(position))
+                    sqlite3_bind_text(stmt, 2, item.name, -1, SQLITE_TRANSIENT)
+                }
+            }
         }
     }
 
@@ -236,15 +310,26 @@ public final class Store {
         }
     }
 
+    /// First column of every row, as text.
+    private func strings(_ sql: String, bind: (OpaquePointer?) -> Void = { _ in }) throws -> [String] {
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt)
+        var result: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? "")
+        }
+        return result
+    }
+
     private func query(_ sql: String, bind: (OpaquePointer?) -> Void = { _ in }) throws -> [Entry] {
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         bind(stmt)
         var result: [Entry] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            // Rows with an unknown activity (e.g. renamed later) are skipped.
-            guard let raw = sqlite3_column_text(stmt, 1),
-                  let activity = Activity(rawValue: String(cString: raw)) else { continue }
+            // Any activity name is kept, listed or not: entries are never dropped.
+            let activity = Activity(sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? "")
             let end: Date? = sqlite3_column_type(stmt, 3) == SQLITE_NULL
                 ? nil
                 : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))

@@ -1,12 +1,35 @@
 import Foundation
 
-public enum Activity: String, CaseIterable, Identifiable, Sendable {
-    case development = "Development"
-    case investigation = "Investigation"
-    case meeting = "Meeting"
+/// A tracked activity, identified by its name. The list of activities lives in the `activities` table;
+/// an entry keeps its activity name even after that activity is deleted from the list.
+public struct Activity: Hashable, Identifiable, Sendable {
+    public let name: String
 
-    public var id: String { rawValue }
-    public var title: String { rawValue }
+    public init(_ name: String) {
+        self.name = name
+    }
+
+    public var id: String { name }
+    public var title: String { name }
+
+    public static let development = Activity("Development")
+    public static let investigation = Activity("Investigation")
+    public static let meeting = Activity("Meeting")
+
+    /// Seeded into a new database.
+    public static let defaults: [Activity] = [.development, .investigation, .meeting]
+
+    /// The name to store for a new activity: trimmed, not empty, not a case-insensitive duplicate of `existing`.
+    public static func validatedName(_ raw: String, existing: [Activity]) throws -> String {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty {
+            throw StoreError.invalid("Enter a name.")
+        }
+        if existing.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            throw StoreError.invalid("\u{201C}\(name)\u{201D} is already in the list.")
+        }
+        return name
+    }
 }
 
 public struct Entry: Identifiable, Equatable, Sendable {

@@ -7,9 +7,21 @@ public enum Report {
         return DateInterval(start: start, end: end)
     }
 
-    /// Per-activity totals clipped to `interval`. Every activity is present (0 if unused).
-    public static func totals(_ entries: [Entry], in interval: DateInterval, now: Date) -> [Activity: TimeInterval] {
-        var result = Dictionary(uniqueKeysWithValues: Activity.allCases.map { ($0, TimeInterval(0)) })
+    /// `listed` followed by the activities of `entries` that are not listed (e.g. deleted from the list),
+    /// in order of first appearance. Reports use it so no tracked time is left out.
+    public static func activities(listed: [Activity], entries: [Entry]) -> [Activity] {
+        var seen = Set(listed)
+        var result = listed
+        for entry in entries where seen.insert(entry.activity).inserted {
+            result.append(entry.activity)
+        }
+        return result
+    }
+
+    /// Per-activity totals clipped to `interval`. Every listed activity is present (0 if unused),
+    /// plus every activity that appears in `entries`.
+    public static func totals(_ entries: [Entry], in interval: DateInterval, listed: [Activity], now: Date) -> [Activity: TimeInterval] {
+        var result = Dictionary(listed.map { ($0, TimeInterval(0)) }, uniquingKeysWith: { a, _ in a })
         for entry in entries {
             result[entry.activity, default: 0] += entry.duration(in: interval, now: now)
         }
@@ -23,7 +35,9 @@ public enum Report {
     }
 
     /// One row per local day per activity; entries crossing midnight are split between days.
-    public static func dailyRows(_ entries: [Entry], now: Date, calendar: Calendar = .current) -> [DailyRow] {
+    /// Within a day, rows follow `listed`, then unlisted activities in order of first appearance.
+    public static func dailyRows(_ entries: [Entry], listed: [Activity], now: Date, calendar: Calendar = .current) -> [DailyRow] {
+        let order = activities(listed: listed, entries: entries.sorted { $0.start < $1.start })
         var buckets: [Date: [Activity: TimeInterval]] = [:]
         for entry in entries {
             let end = entry.end ?? now
@@ -38,7 +52,7 @@ public enum Report {
             }
         }
         return buckets.keys.sorted().flatMap { day in
-            Activity.allCases.compactMap { activity in
+            order.compactMap { activity in
                 guard let seconds = buckets[day]?[activity], seconds > 0 else { return nil }
                 return DailyRow(day: day, activity: activity, duration: seconds)
             }
@@ -46,11 +60,13 @@ public enum Report {
     }
 
     /// The whole export for `format`. Durations are HH:MM:SS, or hours with 2 decimals ("1.50") if `decimalHours`.
-    public static func export(_ entries: [Entry], format: ExportFormat, decimalHours: Bool = false,
+    /// `listed` is the user's activity list; activities found only in `entries` are exported too.
+    public static func export(_ entries: [Entry], format: ExportFormat, listed: [Activity], decimalHours: Bool = false,
                               now: Date, calendar: Calendar = .current) -> String {
         switch format {
-        case .days: daysCSV(dailyRows(entries, now: now, calendar: calendar), decimalHours: decimalHours, calendar: calendar)
-        case .daysByActivity: csv(dailyRows(entries, now: now, calendar: calendar), decimalHours: decimalHours, calendar: calendar)
+        case .days: daysCSV(dailyRows(entries, listed: listed, now: now, calendar: calendar), listed: listed,
+                            decimalHours: decimalHours, calendar: calendar)
+        case .daysByActivity: csv(dailyRows(entries, listed: listed, now: now, calendar: calendar), decimalHours: decimalHours, calendar: calendar)
         case .entries: entriesCSV(entries, decimalHours: decimalHours, now: now, calendar: calendar)
         }
     }
@@ -65,13 +81,16 @@ public enum Report {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// CSV with header `date,<activity>…,total`: one row per day, one column per activity (0 if unused).
-    public static func daysCSV(_ rows: [DailyRow], decimalHours: Bool = false, calendar: Calendar = .current) -> String {
+    /// CSV with header `date,<activity>…,total`: one row per day, one column per listed activity (0 if unused),
+    /// then one column per unlisted activity that appears in `rows`.
+    public static func daysCSV(_ rows: [DailyRow], listed: [Activity], decimalHours: Bool = false, calendar: Calendar = .current) -> String {
         let df = formatter("yyyy-MM-dd", calendar)
-        var lines = [(["date"] + Activity.allCases.map { escape($0.title) } + ["total"]).joined(separator: ",")]
+        var columns = listed
+        for row in rows where !columns.contains(row.activity) { columns.append(row.activity) }
+        var lines = [(["date"] + columns.map { escape($0.title) } + ["total"]).joined(separator: ",")]
         // `rows` is sorted by day, so equal days are adjacent.
         for (day, dayRows) in rows.chunked(by: \.day) {
-            let cells = Activity.allCases.map { activity in
+            let cells = columns.map { activity in
                 duration(dayRows.first { $0.activity == activity }?.duration ?? 0, decimalHours)
             }
             let total = dayRows.reduce(0) { $0 + $1.duration }

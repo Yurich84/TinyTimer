@@ -30,9 +30,10 @@ final class StatusController: NSObject, NSMenuDelegate {
         item.button?.target = self
         item.button?.action = #selector(buttonClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        tracker.$now.combineLatest(tracker.$current, preferences.$defaultActivity, preferences.$timerMode)
-            .sink { [weak self] now, current, defaultActivity, timerMode in
-                self?.updateTitle(now: now, current: current, defaultActivity: defaultActivity, timerMode: timerMode)
+        // Activity list changes also bump `now` (Tracker.touch), so the tooltip's default activity follows them.
+        tracker.$now.combineLatest(tracker.$current, preferences.$defaultActivityName, preferences.$timerMode)
+            .sink { [weak self] now, current, _, timerMode in
+                self?.updateTitle(now: now, current: current, timerMode: timerMode)
                 self?.updateActivityRows()
             }
             .store(in: &cancellables)
@@ -44,8 +45,8 @@ final class StatusController: NSObject, NSMenuDelegate {
             showMenu()
         } else if tracker.current != nil {
             tracker.stop()
-        } else {
-            tracker.start(preferences.defaultActivity)
+        } else if let activity = preferences.defaultActivity(in: tracker.activities) {
+            tracker.start(activity)
         }
     }
 
@@ -55,7 +56,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         item.button?.performClick(nil)
     }
 
-    private func updateTitle(now: Date, current: Entry?, defaultActivity: Activity, timerMode: TimerMode) {
+    private func updateTitle(now: Date, current: Entry?, timerMode: TimerMode) {
         guard let button = item.button else { return }
         if button.image == nil {
             // Template image follows the menu bar's light/dark appearance.
@@ -75,7 +76,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             button.title = Self.idleTitle(dayTotal: tracker.totals(on: now, now: now).values.reduce(0, +))
         }
         button.toolTip = current.map { "TinyTimer — \($0.activity.title) · click: stop, right-click: menu" }
-            ?? "TinyTimer — Idle · click: start \(defaultActivity.title), right-click: menu"
+            ?? "TinyTimer — Idle · click: start \(preferences.defaultActivity(in: tracker.activities)?.title ?? "—"), right-click: menu"
     }
 
     /// " D 42:17": initial of the running activity + its timer.
@@ -113,11 +114,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         summaryItem.view = summary
         menu.addItem(summaryItem)
 
+        // Rebuilt on every open, so added, deleted and moved activities show up at once.
         activityRows = [:]
-        for activity in Activity.allCases {
+        for activity in tracker.activities {
             let mi = NSMenuItem(title: activity.title, action: #selector(startActivity(_:)), keyEquivalent: "")
             mi.target = self
-            mi.representedObject = activity.rawValue
+            mi.representedObject = activity.name
             let row = ActivityRowView(title: activity.title)
             mi.view = row
             menu.addItem(mi)
@@ -158,8 +160,8 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     @objc private func startActivity(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let activity = Activity(rawValue: raw) else { return }
-        tracker.start(activity)
+        guard let name = sender.representedObject as? String else { return }
+        tracker.start(Activity(name))
     }
 
     @objc private func stop() { tracker.stop() }
