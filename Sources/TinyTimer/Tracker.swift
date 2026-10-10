@@ -1,6 +1,6 @@
 import AppKit
 import Combine
-import TTCore
+import TinyTimerCore
 
 /// App state: the running entry plus a 1s clock that drives every live label.
 @MainActor

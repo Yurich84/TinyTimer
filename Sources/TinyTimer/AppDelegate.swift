@@ -1,7 +1,7 @@
 import AppKit
 import Carbon
 import SwiftUI
-import TTCore
+import TinyTimerCore
 import UniformTypeIdentifiers
 
 @MainActor
@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.quickSwitch.toggle()
         }
         if hotKey?.isRegistered == false {
-            NSLog("TT: ⌥⌘T is taken by another app; quick switch is available from the menu only")
+            NSLog("TinyTimer: ⌥⌘T is taken by another app; quick switch is available from the menu only")
         }
 
         let ws = NSWorkspace.shared.notificationCenter
@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         daySelection.day = Date()
         if mainWindow == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: MainView(tracker: tracker, selection: daySelection)))
-            window.title = "TT"
+            window.title = "TinyTimer"
             window.setContentSize(NSSize(width: 520, height: 420))
             window.styleMask.insert(.resizable)
             window.isReleasedWhenClosed = false
@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(dataURL: tracker.dataURL, model: SettingsModel())))
-            window.title = "TT Settings"
+            window.title = "TinyTimer Settings"
             window.styleMask.remove([.resizable, .miniaturizable])
             window.isReleasedWhenClosed = false
             window.center()
@@ -103,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func exportCSV() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "tt-\(Date().formatted(.iso8601.year().month().day())).csv"
+        panel.nameFieldStringValue = "tinytimer-\(Date().formatted(.iso8601.year().month().day())).csv"
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {

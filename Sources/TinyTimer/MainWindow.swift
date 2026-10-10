@@ -1,5 +1,5 @@
 import SwiftUI
-import TTCore
+import TinyTimerCore
 
 /// Selected day of the window. (A model rather than @State: SwiftUI's @State macro
 /// plugin isn't shipped with Command Line Tools.)

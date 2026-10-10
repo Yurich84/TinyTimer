@@ -2,16 +2,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "TT",
+    name: "TinyTimer",
     platforms: [.macOS(.v14)],
     targets: [
         .target(
-            name: "TTCore",
+            name: "TinyTimerCore",
             linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .executableTarget(
-            name: "TT",
-            dependencies: ["TTCore"]
+            name: "TinyTimer",
+            dependencies: ["TinyTimerCore"]
         ),
     ],
     swiftLanguageModes: [.v5]

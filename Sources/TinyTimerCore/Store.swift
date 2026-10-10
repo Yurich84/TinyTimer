@@ -32,13 +32,31 @@ public final class Store {
 
     deinit { sqlite3_close(db) }
 
-    /// Default location: ~/Library/Application Support/TT/tt.sqlite
+    /// Default location: ~/Library/Application Support/TinyTimer/tinytimer.sqlite
     public static func defaultURL() throws -> URL {
-        let dir = try FileManager.default
-            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("TT", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("tt.sqlite")
+        let fm = FileManager.default
+        let support = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let dir = support.appendingPathComponent("TinyTimer", isDirectory: true)
+        let url = dir.appendingPathComponent("tinytimer.sqlite")
+        try migrateFromTT(support: support, to: url)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// The app used to be called TT and kept its data in Application Support/TT/tt.sqlite.
+    /// Moves that database (with its -wal/-shm files) once, before anything opens it.
+    private static func migrateFromTT(support: URL, to url: URL) throws {
+        let fm = FileManager.default
+        let oldDir = support.appendingPathComponent("TT", isDirectory: true)
+        let old = oldDir.appendingPathComponent("tt.sqlite")
+        guard fm.fileExists(atPath: old.path), !fm.fileExists(atPath: url.path) else { return }
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for suffix in ["-wal", "-shm", ""] {   // main file last: its presence marks a finished move
+            let src = URL(fileURLWithPath: old.path + suffix)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            try fm.moveItem(at: src, to: URL(fileURLWithPath: url.path + suffix))
+        }
+        try? fm.removeItem(at: oldDir)   // only succeeds if nothing else is left there
     }
 
     // MARK: - Commands

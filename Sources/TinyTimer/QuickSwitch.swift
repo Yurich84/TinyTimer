@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import TTCore
+import TinyTimerCore
 
 /// Borderless panels can't become key by default — needed for keyboard input.
 private final class KeyPanel: NSPanel {

@@ -1,8 +1,8 @@
 import Foundation
-import TTCore
+import TinyTimerCore
 
 /// Logic checks runnable without XCTest (Command Line Tools ship no test frameworks):
-/// `swift run TT --selftest`
+/// `swift run TinyTimer --selftest`
 enum SelfTest {
     private static var failures = 0
 
@@ -13,7 +13,7 @@ enum SelfTest {
             cal.date(from: DateComponents(year: 2026, month: 10, day: d, hour: h, minute: m))!
         }
 
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tt-selftest-\(UUID()).sqlite").path
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tinytimer-selftest-\(UUID()).sqlite").path
         defer { try? FileManager.default.removeItem(atPath: path) }
 
         do {

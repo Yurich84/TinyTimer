@@ -1,7 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
-import TTCore
+import TinyTimerCore
 
 /// Menu bar item: hourglass icon + "D 01:42:17" while running, plus the dropdown menu.
 @MainActor
@@ -35,7 +35,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         guard let button = item.button else { return }
         if button.image == nil {
             // Template image follows the menu bar's light/dark appearance.
-            let image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "TT")?
+            let image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "TinyTimer")?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
             image?.isTemplate = true
             button.image = image
@@ -45,7 +45,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
         // Kept short so the item is not pushed behind the notch: just the activity's initial ("D 01:42:17").
         button.title = current.map { " \($0.activity.title.prefix(1)) " + Format.hms(now.timeIntervalSince($0.start)) } ?? ""
-        button.toolTip = current.map { "TT — \($0.activity.title)" } ?? "TT — Idle"
+        button.toolTip = current.map { "TinyTimer — \($0.activity.title)" } ?? "TinyTimer — Idle"
     }
 
     // MARK: - NSMenuDelegate
@@ -84,7 +84,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.addItem(action("Export CSV…", #selector(export)))
         menu.addItem(action("Settings…", #selector(settings), key: ","))
         menu.addItem(.separator())
-        menu.addItem(action("Quit TT", #selector(quit), key: "q"))
+        menu.addItem(action("Quit TinyTimer", #selector(quit), key: "q"))
     }
 
     private func updateActivityRows() {

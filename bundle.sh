@@ -1,15 +1,15 @@
 #!/bin/zsh
-# Builds TT.app from the SwiftPM package (works with Command Line Tools only, no Xcode).
+# Builds TinyTimer.app from the SwiftPM package (works with Command Line Tools only, no Xcode).
 # Usage: ./bundle.sh [--install] [--open]
 set -euo pipefail
 cd "$(dirname "$0")"
 
 swift build -c release --build-system native
 
-APP=build/TT.app
+APP=build/TinyTimer.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release --build-system native --show-bin-path)/TT" "$APP/Contents/MacOS/TT"
+cp "$(swift build -c release --build-system native --show-bin-path)/TinyTimer" "$APP/Contents/MacOS/TinyTimer"
 
 # App icon: Resources/AppIcon.png (1024x1024) -> AppIcon.icns
 ICONSET=.build/AppIcon.iconset
@@ -25,10 +25,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key><string>local.tt.TimeTracker</string>
-    <key>CFBundleName</key><string>TT</string>
-    <key>CFBundleDisplayName</key><string>TT</string>
-    <key>CFBundleExecutable</key><string>TT</string>
+    <key>CFBundleIdentifier</key><string>local.tinytimer.TinyTimer</string>
+    <key>CFBundleName</key><string>TinyTimer</string>
+    <key>CFBundleDisplayName</key><string>TinyTimer</string>
+    <key>CFBundleExecutable</key><string>TinyTimer</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -44,10 +44,11 @@ codesign --force --sign - "$APP"
 echo "Built $APP"
 
 if [[ " $* " == *" --install "* ]]; then
-    pkill -x TT 2>/dev/null || true
-    rm -rf /Applications/TT.app
+    pkill -x TinyTimer 2>/dev/null || true
+    pkill -x TT 2>/dev/null || true       # the app's old name
+    rm -rf /Applications/TinyTimer.app /Applications/TT.app
     cp -R "$APP" /Applications/
-    APP=/Applications/TT.app
+    APP=/Applications/TinyTimer.app
     echo "Installed $APP"
 fi
 

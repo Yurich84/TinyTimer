@@ -1,13 +1,13 @@
 import AppKit
 import SwiftUI
-import TTCore
+import TinyTimerCore
 
 /// Renders the SwiftUI screens with sample data into PNGs (no screen-recording permission needed):
-/// `TT --snapshot <dir>`
+/// `TinyTimer --snapshot <dir>`
 @MainActor
 enum Snapshot {
     static func run(into dir: URL) throws {
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tt-snapshot-\(UUID()).sqlite")
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("tinytimer-snapshot-\(UUID()).sqlite")
         defer { try? FileManager.default.removeItem(at: path) }
         let store = try Store(path: path.path)
         // Sample day ending with a running entry, laid out backwards from now.
