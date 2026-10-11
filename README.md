@@ -1,6 +1,14 @@
-# TinyTimer — menu bar time tracker
+<p align="center">
+  <img src="Resources/AppIcon.png" alt="TinyTimer icon" width="128" height="128">
+</p>
 
-[![Release](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml/badge.svg)](https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml)
+<h1 align="center">TinyTimer</h1>
+
+<p align="center">Menu bar time tracker for macOS</p>
+
+<p align="center">
+  <a href="https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml"><img src="https://github.com/Yurich84/TinyTimer/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+</p>
 
 The initial of the activity in a circle + `42:17` / `1:42:17` in the macOS status bar. While running, the circle is filled and shows the current activity. After a stop, the circle is outlined and the item keeps the stopped activity and its time; a click starts that activity again. With nothing tracked today, it shows the default activity and `00:00`. The timer keeps the hour digits of today's total, so the item does not change width when you start or stop.
 Activities are configurable in Settings; the defaults are Development, Investigation, Meeting.
