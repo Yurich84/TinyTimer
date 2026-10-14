@@ -177,6 +177,8 @@ enum SelfTest {
                   "error message reaches localizedDescription")
 
             try activityChecks(path: path, at: at, cal: cal)
+            try timelineChecks(path: path, at: at, cal: cal)
+            colorChecks()
         } catch {
             check(false, "threw \(error)")
         }
@@ -249,6 +251,97 @@ enum SelfTest {
         try store.deleteActivity(.investigation)
         check(rejects { try store.deleteActivity(.meeting) }, "last activity can't be deleted")
         check(try store.activities() == [.meeting], "one activity left")
+    }
+
+    /// Periods, timeline segments and handles, and moving edges in the store.
+    private static func timelineChecks(path: String, at base: (Int, Int, Int) -> Date, cal: Calendar) throws {
+        func at(_ d: Int, _ h: Int, _ m: Int = 0) -> Date { base(d, h, m) }
+        var monday = cal
+        monday.firstWeekday = 2
+        let week = Period.week.interval(containing: at(7, 12, 0), calendar: monday)   // Wed 7 Oct 2026
+        check(week.start == at(5, 0, 0) && week.end == at(12, 0, 0), "week runs Monday to the next Monday")
+        check(Report.days(in: week, calendar: monday).count == 7, "week has 7 days")
+        let month = Period.month.interval(containing: at(7, 12, 0), calendar: cal)
+        check(month.start == at(1, 0, 0) && Report.days(in: month, calendar: cal).count == 31, "October has 31 days")
+        check(Period.day.shifted(at(7, 12, 0), by: -1, calendar: cal) == at(6, 12, 0), "day shifts by one day")
+        check(Period.week.shifted(at(7, 12, 0), by: 1, calendar: cal) == at(14, 12, 0), "week shifts by seven days")
+        // Kyiv leaves summer time on 25 Oct 2026: that day has 25 hours.
+        let longDay = Report.day(containing: at(25, 12, 0), calendar: cal)
+        check(longDay.duration == 25 * 3600, "a day is as long as the calendar says")
+
+        let timelinePath = path + "-timeline"
+        defer { try? FileManager.default.removeItem(atPath: timelinePath) }
+        let store = try Store(path: timelinePath)
+        let a = try store.insert(activity: .development, start: at(7, 9), end: at(7, 10))
+        let b = try store.insert(activity: .meeting, start: at(7, 10), end: at(7, 11))
+        let c = try store.insert(activity: .investigation, start: at(7, 12), end: at(7, 13))
+        let night = try store.insert(activity: .development, start: at(6, 23), end: at(7, 1))
+        let day = Report.day(containing: at(7, 12), calendar: cal)
+        let now = at(7, 20)
+        let segments = Timeline.segments(try store.entries(overlapping: day), in: day, now: now)
+        check(segments.map(\.entry.id) == [night.id, a.id, b.id, c.id], "segments are ordered by start")
+        check(segments[0].start == day.start && segments[0].end == at(7, 1), "a segment is cut at midnight")
+
+        let handles = Timeline.handles(segments, in: day, now: now)
+        // night: no start edge (cut), end edge free up to a's start; a|b joint; b end free up to c; c start and end.
+        check(handles.map(\.id) == ["\(night.id)|-", "-|\(a.id)", "\(a.id)|\(b.id)", "\(b.id)|-", "-|\(c.id)", "\(c.id)|-"],
+              "handles: \(handles.map(\.id))")
+        let joint = handles[2]
+        check(joint.position == at(7, 10) && joint.range == at(7, 9, 1)...at(7, 10, 59), "joint edge stays inside both entries")
+        check(joint.target(for: at(7, 10, 30)) == at(7, 10, 30), "target cuts to the minute")
+        check(joint.target(for: at(7, 12)) == at(7, 10, 59), "target is clamped to the range")
+        check(handles[3].range == at(7, 10, 1)...at(7, 12), "free edge may grow up to the next entry")
+        check(handles[5].range == at(7, 12, 1)...at(7, 20), "last edge may grow up to now, not the end of the day")
+        check(handles[1].range == at(7, 1)...at(7, 9, 59), "start edge may grow back to the previous entry")
+        let early = at(7, 12, 30)
+        let earlySegments = Timeline.segments(try store.entries(overlapping: day), in: day, now: early)
+        let earlyHandles = Timeline.handles(earlySegments, in: day, now: early)
+        check(earlyHandles.last?.range.upperBound == early, "nothing may be dropped in the future")
+        let preview = Timeline.preview(segments, moving: joint, to: at(7, 10, 30))
+        check(preview[1].end == at(7, 10, 30) && preview[2].start == at(7, 10, 30), "preview moves both sides of a joint")
+
+        // A click (a drag within the same minute) keeps seconds.
+        let odd = Timeline.Handle(left: nil, right: a, position: at(7, 9).addingTimeInterval(37), range: at(7, 1)...at(7, 9, 59))
+        check(odd.target(for: at(7, 9).addingTimeInterval(5)) == odd.position, "a click does not change the edge")
+
+        // Open entry: its start moves, its end does not.
+        let running = try store.insert(activity: .meeting, start: at(7, 15), end: nil)
+        let live = Timeline.segments(try store.entries(overlapping: day), in: day, now: now)
+        let liveHandles = Timeline.handles(live, in: day, now: now)
+        check(liveHandles.last?.id == "-|\(running.id)", "running entry has a start edge only")
+
+        // Store: moving edges.
+        try store.moveBoundary(left: a, right: b, to: at(7, 10, 30))
+        func stored(_ id: Int64) throws -> Entry? { try store.allEntries().first { $0.id == id } }
+        check(try stored(a.id)?.end == at(7, 10, 30), "moving a joint edge right: left end")
+        check(try stored(b.id)?.start == at(7, 10, 30), "moving a joint edge right: right start")
+        try store.moveBoundary(left: try stored(a.id), right: try stored(b.id), to: at(7, 9, 20))
+        check(try stored(a.id)?.end == at(7, 9, 20), "moving a joint edge left: left end")
+        check(try stored(b.id)?.start == at(7, 9, 20), "moving a joint edge left: right start")
+        check(rejects { try store.moveBoundary(left: a, right: c, to: at(7, 9, 30)) }, "entries that don't touch can't move together")
+        check(rejects { try store.moveBoundary(left: try stored(b.id), right: nil, to: at(7, 12, 30)) },
+              "growing into the next entry is rejected")
+        try store.moveBoundary(left: try stored(b.id), right: nil, to: at(7, 11, 45))
+        check(try stored(b.id)?.end == at(7, 11, 45), "moving a free end")
+        check(try stored(a.id)?.end == at(7, 9, 20), "a free move leaves others alone")
+        try store.moveBoundary(left: nil, right: running, to: at(7, 16))
+        check(try store.openEntry()?.start == at(7, 16), "moving the start of the open entry")
+        check(rejects { try store.moveBoundary(left: nil, right: night, to: at(7, 2)) }, "start past the end is rejected")
+        check(try stored(night.id) == night, "a rejected move changes nothing")
+    }
+
+    private static func colorChecks() {
+        check(ActivityColors.hex(of: ActivityColors.color(hex: "#4C8DF6")!) == "#4C8DF6", "color hex round trip")
+        check(ActivityColors.color(hex: "blue") == nil, "bad hex is ignored")
+        check(ActivityColors.defaultHex(for: .development) != ActivityColors.defaultHex(for: .meeting), "default activities differ")
+        check(ActivityColors.defaultHex(for: Activity("Reading")) == ActivityColors.defaultHex(for: Activity("Reading")), "default color is stable")
+        let suite = "tinytimer-selftest-colors-\(UUID())"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let defaults = UserDefaults(suiteName: suite)!
+        let preferences = Preferences(defaults: defaults)
+        preferences.setColor(ActivityColors.color(hex: "#112233")!, for: .meeting)
+        check(Preferences(defaults: defaults).activityColors[Activity.meeting.name] == "#112233", "chosen color persists")
+        check(Preferences(defaults: defaults).activityColors[Activity.development.name] == nil, "other activities keep the default")
     }
 
     /// True if `body` throws a validation error (not an SQLite one).

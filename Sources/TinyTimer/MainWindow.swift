@@ -1,31 +1,57 @@
 import SwiftUI
 import TinyTimerCore
 
-/// Selected day of the window, plus the History tab's selection, editor sheet and pending delete.
+enum MainTab: Hashable {
+    case history, statistics, timeline
+}
+
+/// Selected day, period and tab of the window, plus the History tab's selection, editor sheet and pending delete.
 /// (A model rather than @State: SwiftUI's @State macro plugin isn't shipped with Command Line Tools.)
 final class DaySelection: ObservableObject {
     @Published var day = Date()
+    @Published var tab = MainTab.history
+    /// Span of Statistics and Timeline; History always shows one day.
+    @Published var period = Period.day
     @Published var selectedEntry: Int64?
     @Published var editor: EntryEditor?
     @Published var pendingDelete: Entry?
+    let drag = TimelineDrag()
+
+    var activePeriod: Period { tab == .history ? .day : period }
+    var interval: DateInterval { activePeriod.interval(containing: day) }
 }
 
-/// "Today" window: History and Statistics tabs for a chosen day.
+/// "Statistics" window: History, Statistics and Timeline tabs for a chosen day, week or month.
 struct MainView: View {
     @ObservedObject var tracker: Tracker
     @ObservedObject var selection: DaySelection
-
-    private var day: Date { selection.day }
+    @ObservedObject var preferences: Preferences
 
     var body: some View {
         VStack(spacing: 0) {
-            DayPicker(day: $selection.day)
-                .padding(.vertical, 10)
-            TabView {
+            VStack(spacing: 8) {
+                if selection.tab != .history {
+                    Picker("Period", selection: $selection.period) {
+                        ForEach(Period.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 240)
+                }
+                DayPicker(day: $selection.day, period: selection.activePeriod)
+            }
+            .padding(.vertical, 10)
+            TabView(selection: $selection.tab) {
                 HistoryView(tracker: tracker, selection: selection)
                     .tabItem { Text("History") }
-                StatisticsView(tracker: tracker, day: day)
+                    .tag(MainTab.history)
+                StatisticsView(tracker: tracker, preferences: preferences, interval: selection.interval)
                     .tabItem { Text("Statistics") }
+                    .tag(MainTab.statistics)
+                TimelineView(tracker: tracker, preferences: preferences, drag: selection.drag, interval: selection.interval,
+                             period: selection.activePeriod)
+                    .tabItem { Text("Timeline") }
+                    .tag(MainTab.timeline)
             }
             .padding([.horizontal, .bottom], 12)
         }
@@ -36,29 +62,42 @@ struct MainView: View {
 
 private struct DayPicker: View {
     @Binding var day: Date
+    let period: Period
 
-    private var isToday: Bool { Calendar.current.isDateInToday(day) }
+    /// The shown period contains now: there is nothing later to go to.
+    private var isCurrent: Bool { period.interval(containing: day).contains(Date()) }
 
     var body: some View {
         HStack(spacing: 12) {
             Button { shift(-1) } label: { Image(systemName: "chevron.left") }
             Text(title).font(.headline).frame(minWidth: 160)
             Button { shift(1) } label: { Image(systemName: "chevron.right") }
-                .disabled(isToday)
+                .disabled(isCurrent)
             Button("Today") { day = Date() }
-                .disabled(isToday)
+                .disabled(isCurrent)
         }
         .buttonStyle(.borderless)
     }
 
     private var title: String {
-        if isToday { return "Today" }
-        if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
-        return day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
+        let calendar = Calendar.current
+        let interval = period.interval(containing: day)
+        switch period {
+        case .day:
+            if calendar.isDateInToday(day) { return "Today" }
+            if calendar.isDateInYesterday(day) { return "Yesterday" }
+            return day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
+        case .week:
+            if isCurrent { return "This week" }
+            let last = interval.end.addingTimeInterval(-1)
+            return "\(interval.start.formatted(.dateTime.day().month(.abbreviated))) – \(last.formatted(.dateTime.day().month(.abbreviated).year()))"
+        case .month:
+            return day.formatted(.dateTime.month(.wide).year())
+        }
     }
 
-    private func shift(_ days: Int) {
-        day = Calendar.current.date(byAdding: .day, value: days, to: day) ?? day
+    private func shift(_ count: Int) {
+        day = period.shifted(day, by: count)
     }
 }
 
@@ -247,14 +286,16 @@ struct EntryEditorView: View {
 
 struct StatisticsView: View {
     @ObservedObject var tracker: Tracker
-    let day: Date
+    @ObservedObject var preferences: Preferences
+    let interval: DateInterval
 
     var body: some View {
-        let totals = tracker.totals(on: day)
+        let entries = tracker.entries(in: interval)
+        let totals = Report.totals(entries, in: interval, listed: tracker.activities, now: tracker.now)
         let total = totals.values.reduce(0, +)
         let maxValue = max(totals.values.max() ?? 0, 1)
-        // Listed activities, then deleted ones that still have time on this day.
-        let rows = Report.activities(listed: tracker.activities, entries: tracker.entries(on: day))
+        // Listed activities, then deleted ones that still have time in this period.
+        let rows = Report.activities(listed: tracker.activities, entries: entries)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(rows) { activity in
                 let value = totals[activity] ?? 0
@@ -263,7 +304,7 @@ struct StatisticsView: View {
                     Text(Format.short(value)).frame(width: 64, alignment: .trailing)
                     GeometryReader { geo in
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.accentColor)
+                            .fill(preferences.color(for: activity))
                             .frame(width: max(value > 0 ? 2 : 0, geo.size.width * value / maxValue))
                     }
                     .frame(height: 12)

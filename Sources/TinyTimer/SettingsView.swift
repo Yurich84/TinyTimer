@@ -68,6 +68,11 @@ struct SettingsView: View {
         return Section {
             ForEach(Array(activities.enumerated()), id: \.element) { index, activity in
                 HStack {
+                    ColorPicker("Color of \(activity.title)", selection: Binding(
+                        get: { preferences.color(for: activity) },
+                        set: { preferences.setColor($0, for: activity) }
+                    ), supportsOpacity: false)
+                        .labelsHidden()
                     Text(activity.title)
                     Spacer()
                     Group {
@@ -100,7 +105,7 @@ struct SettingsView: View {
         } header: {
             Text("Activities")
         } footer: {
-            Text("Keys 1–9 in the quick switch pick the first nine. Deleting an activity keeps its entries.")
+            Text("The color shows the activity in Statistics and Timeline. Keys 1–9 in the quick switch pick the first nine. Deleting an activity keeps its entries.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

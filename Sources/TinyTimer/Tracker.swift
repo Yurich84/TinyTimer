@@ -70,6 +70,16 @@ final class Tracker: ObservableObject {
         reload()
     }
 
+    /// Drag on the timeline. A rejected move is reported; the views show the stored times again.
+    func moveBoundary(left: Entry?, right: Entry?, to date: Date) {
+        do {
+            try store.moveBoundary(left: left, right: right, to: date)
+        } catch {
+            report(error)
+        }
+        reload()
+    }
+
     func delete(_ entry: Entry) {
         do {
             try store.delete(id: entry.id)
@@ -115,12 +125,20 @@ final class Tracker: ObservableObject {
     }
 
     func entries(on day: Date) -> [Entry] {
-        (try? store.entries(overlapping: Report.day(containing: day))) ?? []
+        entries(in: Report.day(containing: day))
+    }
+
+    func entries(in interval: DateInterval) -> [Entry] {
+        (try? store.entries(overlapping: interval)) ?? []
     }
 
     /// `now` overrides the clock: @Published sinks run before `self.now` takes the new value.
     func totals(on day: Date, now: Date? = nil) -> [Activity: TimeInterval] {
         Report.totals(entries(on: day), in: Report.day(containing: day), listed: activities, now: now ?? self.now)
+    }
+
+    func totals(in interval: DateInterval) -> [Activity: TimeInterval] {
+        Report.totals(entries(in: interval), in: interval, listed: activities, now: now)
     }
 
     var elapsed: TimeInterval {

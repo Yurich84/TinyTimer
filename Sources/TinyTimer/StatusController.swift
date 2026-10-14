@@ -189,7 +189,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        menu.addItem(action("Today", #selector(openWindow)))
+        menu.addItem(action("Statistics", #selector(openWindow)))
         menu.addItem(action("Export CSV…", #selector(export)))
         menu.addItem(action("Settings…", #selector(settings), key: ","))
         menu.addItem(.separator())

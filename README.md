@@ -19,14 +19,19 @@ the activity list is in table `activities(id, name, position)`).
 - **Left click** — stop the running activity, or start the default one (Settings → Default activity)
 - **Right click** (or ⌃-click) — menu
 - **⌥⌘T** — quick switch popup (↑↓, Enter, 1–9 for the first nine activities, Esc)
-- **Today** — window with History / Statistics tabs and day navigation. In History: double-click or
-  right-click a row to edit or delete it, **Add…** for a manual entry. Overlapping entries are rejected.
+- **Statistics** — window with History / Statistics / Timeline tabs and arrows to go back and forth.
+  In History: double-click or right-click a row to edit or delete it, **Add…** for a manual entry.
+  Overlapping entries are rejected. Statistics and Timeline show a day, a week or a month (switch at the top).
+  Timeline draws every day as one bar from 00 to 24 with a color per activity (Settings → Activities).
+  Drag an edge of an interval to change it: up to the next interval, or to the end of the day (or now).
+  Intervals that touch move together. A week shows 7 bars, a month scrolls vertically through all its days.
 - **Export CSV** — format chosen in the save panel (`HH:MM:SS` or decimal hours):
   one row per day (`date,<activity…>,total`), one row per day per activity (`date,activity,duration`),
   or one row per entry (`date,activity,start,end,duration`)
 - **Settings → Activities** — add an activity (name + **Add**), move it up or down, or delete it.
   Names are trimmed and must be unique (case is ignored). The last activity cannot be deleted.
   Deleting an activity keeps its entries: they stay in History, Statistics and CSV exports.
+- **Settings → Activities → color swatch** — the color of an activity in Statistics and Timeline
 - **Settings → Timer shows** — time since the last switch, or today's total for the current activity
 - Sleep stops the running entry; it resumes on wake if the sleep was shorter than 15 min.
 

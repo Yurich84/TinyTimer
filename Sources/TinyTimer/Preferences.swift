@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 import TinyTimerCore
 
 /// User preferences stored in UserDefaults. Each setting is a @Published property that writes itself back on change.
@@ -8,6 +8,7 @@ final class Preferences: ObservableObject {
         static let timerMode = "timerMode"
         static let exportFormat = "exportFormat"
         static let exportDecimalHours = "exportDecimalHours"
+        static let activityColors = "activityColors"
     }
 
     private let defaults: UserDefaults
@@ -33,6 +34,11 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(exportDecimalHours, forKey: Key.exportDecimalHours) }
     }
 
+    /// Colors chosen in Settings, "#RRGGBB" by activity name. Activities not in it use `ActivityColors.defaultHex`.
+    @Published private(set) var activityColors: [String: String] {
+        didSet { defaults.set(activityColors, forKey: Key.activityColors) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         // Unknown or missing values fall back to the default.
@@ -40,6 +46,16 @@ final class Preferences: ObservableObject {
         timerMode = defaults.string(forKey: Key.timerMode).flatMap(TimerMode.init(rawValue:)) ?? .session
         exportFormat = defaults.string(forKey: Key.exportFormat).flatMap(ExportFormat.init(rawValue:)) ?? .days
         exportDecimalHours = defaults.bool(forKey: Key.exportDecimalHours)
+        activityColors = defaults.dictionary(forKey: Key.activityColors) as? [String: String] ?? [:]
+    }
+
+    func color(for activity: Activity) -> Color {
+        let hex = activityColors[activity.name] ?? ActivityColors.defaultHex(for: activity)
+        return ActivityColors.color(hex: hex) ?? .gray
+    }
+
+    func setColor(_ color: Color, for activity: Activity) {
+        activityColors[activity.name] = ActivityColors.hex(of: color)
     }
 
     /// The chosen default activity if it is still in `activities`, otherwise the first listed one.

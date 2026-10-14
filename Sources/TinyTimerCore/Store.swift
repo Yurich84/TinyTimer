@@ -143,17 +143,42 @@ public final class Store {
 
     public func update(id: Int64, activity: Activity, start: Date, end: Date?) throws {
         try transaction {
-            // A stale editor must not reopen an entry that was stopped meanwhile.
-            if end == nil, try openEntry()?.id != id {
-                throw StoreError.invalid("This entry is no longer running.")
-            }
-            try validate(id: id, start: start, end: end)
-            try run("UPDATE entries SET activity = ?, start = ?, end = ? WHERE id = ?") { stmt in
-                bind(stmt, activity: activity, start: start, end: end)
-                sqlite3_bind_int64(stmt, 4, id)
-            }
-            if sqlite3_changes(db) == 0 { throw StoreError.invalid("The entry no longer exists.") }
+            try updateEntry(id: id, activity: activity, start: start, end: end)
         }
+    }
+
+    /// Moves the edge between two entries, or the edge of one entry, to `date` in one transaction.
+    /// `left` loses or gains its end, `right` its start. If both are given, they must still touch.
+    public func moveBoundary(left: Entry?, right: Entry?, to date: Date) throws {
+        try transaction {
+            let current = try [left, right].map { entry -> Entry? in
+                guard let entry else { return nil }
+                guard let fresh = try entries(id: entry.id) else { throw StoreError.invalid("The entry no longer exists.") }
+                return fresh
+            }
+            let (l, r) = (current[0], current[1])
+            if let l, let r, l.end != r.start { throw StoreError.invalid("The entries have changed. Try again.") }
+            let from = l?.end ?? r?.start ?? date
+            // The entry that gives up time goes first, so the other one can grow into it.
+            var steps: [() throws -> Void] = []
+            if let l { steps.append { try self.updateEntry(id: l.id, activity: l.activity, start: l.start, end: date) } }
+            if let r { steps.append { try self.updateEntry(id: r.id, activity: r.activity, start: date, end: r.end) } }
+            for step in date < from ? steps : steps.reversed() { try step() }
+        }
+    }
+
+    /// `update` without its own transaction.
+    private func updateEntry(id: Int64, activity: Activity, start: Date, end: Date?) throws {
+        // A stale editor must not reopen an entry that was stopped meanwhile.
+        if end == nil, try openEntry()?.id != id {
+            throw StoreError.invalid("This entry is no longer running.")
+        }
+        try validate(id: id, start: start, end: end)
+        try run("UPDATE entries SET activity = ?, start = ?, end = ? WHERE id = ?") { stmt in
+            bind(stmt, activity: activity, start: start, end: end)
+            sqlite3_bind_int64(stmt, 4, id)
+        }
+        if sqlite3_changes(db) == 0 { throw StoreError.invalid("The entry no longer exists.") }
     }
 
     public func delete(id: Int64) throws {
@@ -267,6 +292,12 @@ public final class Store {
             sqlite3_bind_double(stmt, 1, interval.end.timeIntervalSince1970)
             sqlite3_bind_double(stmt, 2, interval.start.timeIntervalSince1970)
         }
+    }
+
+    private func entries(id: Int64) throws -> Entry? {
+        try query("SELECT id, activity, start, end FROM entries WHERE id = ?") { stmt in
+            sqlite3_bind_int64(stmt, 1, id)
+        }.first
     }
 
     public func allEntries() throws -> [Entry] {

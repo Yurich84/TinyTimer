@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showMainWindow() {
         daySelection.day = Date()
         if mainWindow == nil {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: MainView(tracker: tracker, selection: daySelection)))
+            let window = NSWindow(contentViewController: NSHostingController(rootView: MainView(tracker: tracker, selection: daySelection, preferences: preferences)))
             window.title = "TinyTimer"
             window.setContentSize(NSSize(width: 520, height: 420))
             window.styleMask.insert(.resizable)
