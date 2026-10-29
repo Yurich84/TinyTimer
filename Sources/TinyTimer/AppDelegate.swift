@@ -109,8 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
+            let calendar = Calendar.current
+            let from = calendar.startOfDay(for: options.startDate)
+            let through = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: options.endDate))!
             let csv = Report.export(try tracker.store.allEntries(), format: preferences.exportFormat, listed: tracker.activities,
-                                    decimalHours: preferences.exportDecimalHours, now: Date())
+                                    decimalHours: preferences.exportDecimalHours, interval: DateInterval(start: from, end: through), now: Date())
             try csv.write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } catch {
@@ -126,6 +129,11 @@ private final class ExportOptionsView: NSView {
     private let preferences: Preferences
     private let formatPopUp = NSPopUpButton()
     private let decimalCheckbox = NSButton(checkboxWithTitle: "Durations as decimal hours", target: nil, action: nil)
+    private let startPicker = NSDatePicker()
+    private let endPicker = NSDatePicker()
+
+    var startDate: Date { startPicker.dateValue }
+    var endDate: Date { endPicker.dateValue }
 
     init(panel: NSSavePanel, preferences: Preferences) {
         self.panel = panel
@@ -139,8 +147,19 @@ private final class ExportOptionsView: NSView {
         decimalCheckbox.target = self
         decimalCheckbox.action = #selector(decimalChanged)
 
+        let today = Date()
+        let calendar = Calendar.current
+        startPicker.datePickerStyle = .textField
+        startPicker.datePickerElements = [.yearMonthDay]
+        startPicker.dateValue = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
+        endPicker.datePickerStyle = .textField
+        endPicker.datePickerElements = [.yearMonthDay]
+        endPicker.dateValue = today
+
         let formatRow = NSStackView(views: [NSTextField(labelWithString: "Format:"), formatPopUp])
-        let stack = NSStackView(views: [formatRow, decimalCheckbox])
+        let startRow = NSStackView(views: [NSTextField(labelWithString: "From:"), startPicker])
+        let endRow = NSStackView(views: [NSTextField(labelWithString: "Through:"), endPicker])
+        let stack = NSStackView(views: [formatRow, startRow, endRow, decimalCheckbox])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)

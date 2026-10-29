@@ -62,12 +62,24 @@ public enum Report {
     /// The whole export for `format`. Durations are HH:MM:SS, or hours with 2 decimals ("1.50") if `decimalHours`.
     /// `listed` is the user's activity list; activities found only in `entries` are exported too.
     public static func export(_ entries: [Entry], format: ExportFormat, listed: [Activity], decimalHours: Bool = false,
-                              now: Date, calendar: Calendar = .current) -> String {
-        switch format {
+                              interval: DateInterval? = nil, now: Date, calendar: Calendar = .current) -> String {
+        let entries = interval.map { clipped(entries, to: $0, now: now) } ?? entries
+        return switch format {
         case .days: daysCSV(dailyRows(entries, listed: listed, now: now, calendar: calendar), listed: listed,
                             decimalHours: decimalHours, calendar: calendar)
         case .daysByActivity: csv(dailyRows(entries, listed: listed, now: now, calendar: calendar), decimalHours: decimalHours, calendar: calendar)
         case .entries: entriesCSV(entries, decimalHours: decimalHours, now: now, calendar: calendar)
+        }
+    }
+
+    /// Keeps only entries overlapping the interval and clips their boundaries to it.
+    private static func clipped(_ entries: [Entry], to interval: DateInterval, now: Date) -> [Entry] {
+        entries.compactMap { entry in
+            let end = min(entry.end ?? now, interval.end)
+            let start = max(entry.start, interval.start)
+            guard end > start else { return nil }
+            return Entry(id: entry.id, activity: entry.activity, start: start,
+                         end: entry.end == nil && end == now ? nil : end)
         }
     }
 
